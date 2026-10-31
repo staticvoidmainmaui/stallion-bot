@@ -1,0 +1,21 @@
+[
+  { "name": "Alex", "aliases": [], "phone": "15550000001", "isExec": true, "role": "President" },
+  { "name": "Michael", "aliases": ["Mike"], "phone": "15550000002", "isExec": true, "role": "VP of Programming" },
+  { "name": "Chris", "aliases": [], "phone": "15550000003", "isExec": true, "role": "VP of Operations" },
+  { "name": "Derek", "aliases": [], "phone": "15550000004", "isExec": true, "role": "VP of Finance" },
+  { "name": "Ethan", "aliases": ["Eth"], "phone": "15550000005", "isExec": true, "role": "VP of Communications" },
+  { "name": "Frank", "aliases": ["Frank Doe"], "phone": "15550000006", "isExec": true, "role": "VP of Membership" },
+  { "name": "George", "aliases": ["George Smith"], "phone": "15550000007", "isExec": true, "role": "Judicial Chancellor" },
+  { "name": "Henry", "aliases": ["Henry Adams Cole"], "phone": "15550000008", "isExec": true, "role": "Risk Manager" },
+  { "name": "Ian", "aliases": ["Ian Brooks"], "phone": "15550000009", "role": "Recruitment / Step and Stroll" },
+  { "name": "Jack", "aliases": ["Jack Miller", "Jack M"], "phone": "15550000010", "role": "Scholarship" },
+  { "name": "Kevin", "aliases": ["Kevin Park"], "phone": "15550000011", "role": "Philanthropy" },
+  { "name": "Leo", "aliases": ["Leo Garcia"], "phone": "15550000012", "role": "Community Service" },
+  { "name": "Mark", "aliases": [], "phone": "15550000013", "role": "Cultural Awareness / Alumni" },
+  { "name": "Nate", "aliases": [], "phone": "15550000014" },
+  { "name": "Owen", "aliases": ["Owen B"], "phone": "15550000015", "role": "Scholarship" },
+  { "name": "Paul", "aliases": [], "phone": "15550000016" },
+  { "name": "Sam H", "aliases": [], "phone": "15550000017" },
+  { "name": "Tom", "aliases": [], "phone": "15550000018" },
+  { "name": "Victor Lee", "aliases": ["Victor"], "phone": "15550000019" }
+]
