@@ -1,0 +1,175 @@
+{
+  "_readme": "Short names the bot uses everywhere. 'orgs': every way the minutes or bros write an org -> one short code. 'eventNames': pin an exact short name for an event (left side = words in the minutes title, right side = what the bot shows). 'words': filler swaps that keep titles short. Set confirmed=true once checked.",
+  "orgs": [
+    {
+      "short": "TNX",
+      "full": "Theta Nu Xi Multicultural Sorority, Inc.",
+      "aliases": [
+        "Theta Nu Xi",
+        "Thetas",
+        "ΘΝΞ"
+      ],
+      "confirmed": false
+    },
+    {
+      "short": "KPL",
+      "full": "Kappa Phi Lambda Sorority, Inc.",
+      "aliases": [
+        "Kappa Phi Lambda",
+        "KPhiL",
+        "ΚΦΛ"
+      ],
+      "confirmed": false
+    },
+    {
+      "short": "aKDPhi",
+      "full": "alpha Kappa Delta Phi Sorority, Inc.",
+      "aliases": [
+        "alpha Kappa Delta Phi",
+        "aKDPhi",
+        "AKDPhi",
+        "αΚΔΦ"
+      ],
+      "confirmed": false
+    },
+    {
+      "short": "PDPsi",
+      "full": "Pi Delta Psi Fraternity, Inc.",
+      "aliases": [
+        "Pi Delta Psi",
+        "PDP",
+        "ΠΔΨ"
+      ],
+      "confirmed": false
+    },
+    {
+      "short": "DPO",
+      "full": "Delta Phi Omega Sorority, Inc.",
+      "aliases": [
+        "Delta Phi Omega",
+        "ΔΦΩ"
+      ],
+      "confirmed": false
+    },
+    {
+      "short": "GH",
+      "full": "Gamma Eta Sorority, Inc.",
+      "aliases": [
+        "Gamma Eta",
+        "ΓΗ"
+      ],
+      "confirmed": false
+    },
+    {
+      "short": "BXO",
+      "full": "?? (fill in)",
+      "aliases": [],
+      "confirmed": false
+    },
+    {
+      "short": "Zetas",
+      "full": "Zeta Phi Beta Sorority, Inc.",
+      "aliases": [
+        "Zeta Phi Beta",
+        "ZPhiB",
+        "ΖΦΒ"
+      ],
+      "confirmed": false
+    },
+    {
+      "short": "Sigmas",
+      "full": "Phi Beta Sigma Fraternity, Inc.",
+      "aliases": [
+        "Phi Beta Sigma",
+        "PBS",
+        "ΦΒΣ"
+      ],
+      "confirmed": false
+    },
+    {
+      "short": "SGRho",
+      "full": "Sigma Gamma Rho Sorority, Inc.",
+      "aliases": [
+        "Sigma Gamma Rho",
+        "Poodles",
+        "ΣΓΡ"
+      ],
+      "confirmed": false
+    },
+    {
+      "short": "Deltas",
+      "full": "Delta Sigma Theta Sorority, Inc.",
+      "aliases": [
+        "Delta Sigma Theta",
+        "DST",
+        "ΔΣΘ"
+      ],
+      "confirmed": false
+    },
+    {
+      "short": "MGC",
+      "full": "Multicultural Greek Council",
+      "aliases": [
+        "Multicultural Greek Council"
+      ],
+      "confirmed": false
+    },
+    {
+      "short": "SFL",
+      "full": "Sorority and Fraternity Life",
+      "aliases": [
+        "Sorority and Fraternity Life",
+        "Office of SFL"
+      ],
+      "confirmed": false
+    },
+    {
+      "short": "SLB",
+      "full": "Sigma Lambda Beta International Fraternity, Inc.",
+      "aliases": [
+        "Sigma Lambda Beta",
+        "Betas",
+        "ΣΛΒ"
+      ],
+      "confirmed": false
+    },
+    {
+      "short": "ZBF",
+      "full": "Zeta Beta Fund",
+      "aliases": [
+        "Zeta Beta Fund"
+      ],
+      "confirmed": false
+    }
+  ],
+  "eventNames": {
+    "TNX Homelessness MGC Cosponsorship": "TNX Cosponsor",
+    "Zen Noodle Bar Fundraising Night": "Zen Noodle Fundraiser",
+    "DPO Ronald McDonald House Visiting Chef Volunteering": "DPO Ronald McD Chef",
+    "Chapter Elections Second Round Nominations": "Nominations (Rd 2)",
+    "Brotherhood Retreat Elections Nominations": "Nominations (Rd 1)",
+    "American Football Watch Party with Betas": "Football Watch Party",
+    "Informational for Interests": "Interest Info Session",
+    "Membership Development Trip": "MD Trip",
+    "Brother Lock-In & Elections": "Lock-In & Elections",
+    "VC CPR Awareness Day": "CPR Awareness Day",
+    "CPR Week Fundraiser Walk": "CPR Fundraiser Walk",
+    "MGC Market - Neos": "MGC Market",
+    "Weekly Step and Stroll Practice": "Step & Stroll Practice",
+    "Step and Stroll Practice": "Step & Stroll Practice",
+    "Presidential Inauguration Student Event": "Inauguration Event",
+    "MGC E-Board Elections": "MGC E-Board Elections",
+    "DPO Ronald McDonald House Visiting Chef": "DPO Ronald McD Chef",
+    "Florida Invitational Step Show": "FISS Stroll-off",
+    "Interest Informational": "Interest Info Session",
+    "Turlington Table": "Tabling"
+  },
+  "words": {
+    "Co-Sponsorship": "Cosponsor",
+    "Cosponsorship": "Cosponsor",
+    "Co-sponsorship Request": "Cosponsor",
+    "Fundraising Night": "Fundraiser",
+    "Volunteering": "Volunteer",
+    "Informational": "Info Session"
+  }
+}
