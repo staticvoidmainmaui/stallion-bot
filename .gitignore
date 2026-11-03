@@ -1,0 +1,12 @@
+node_modules/
+auth/
+data/
+.env
+*.db
+*.db-wal
+*.db-shm
+service-account*.json
+roster.json
+
+GROUP-IDS.md
+fixtures/
