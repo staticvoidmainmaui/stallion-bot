@@ -1,88 +1,95 @@
 import cron from 'node-cron';
 import { config } from './config.js';
 import type { Store } from './db.js';
-import { addDays, localDate, shortfall, todayISO, upcoming } from './events.js';
+import { todayISO, upcoming } from './events.js';
 import type { Bot } from './bot.js';
 
 const HOUR = 3_600_000;
 
 /**
- * Schedules (chapter time zone):
- * - every 15 min: "Tomorrow" reminder (24h before timed events; EVENING_REMINDER_HOUR the night before
- *   date-only events) and "Starting soon" (2h before timed events). Each is sent once per event.
- * - optional auto follow-up poll ~2 days out for events that are short or have unanswered maybes.
- * - DAILY_DIGEST_CRON (default 9am Tue-Sun): today + tomorrow.
- * - WEEKLY_DIGEST_CRON (default noon Monday): UF Betas sticker + chapter tonight + the week.
- * - hourly: re-read the minutes (extraction only re-runs when the doc changed).
+ * Automatic posts (chapter time zone). Full write-up in SCHEDULE.md.
+ * - WEEKLY_DIGEST_CRON (Mon 9 PM): sticker + this week + need bros, held until the minutes are from today.
+ * - TOMORROW_CRON (8 PM, every night but Monday): one post with all of tomorrow's events + tags.
+ * - every 15 min: "Starting soon" SOON_HOURS before events with a sign-up list or required headcount.
+ * - NEED_BROS_CRON (Thu 6 PM): need-bros list + a follow-up poll per short event (Fri - next Tue).
+ * - hourly :05: re-read the minutes (only calls Claude when the file changed).
  */
 export function startReminders(store: Store, bot: Bot, refreshTick: () => Promise<void>): void {
   const tz = config.tz;
   const live = () => config.remindersEnabled && !!config.groupJid && !!bot.sock;
-
-  const reminderTick = async () => {
-      if (!live()) return;
-      const now = new Date();
-      for (const v of upcoming(store, 3, now)) {
-        const start = v.hasTime && v.start ? v.start.getTime() : null;
-
-        // "Starting soon" (timed events only).
-        if (start && start > now.getTime() && start - now.getTime() <= 2 * HOUR && !store.reminderSent(v.id, '2h')) {
-          store.markReminder(v.id, '2h');
-          store.markReminder(v.id, '24h'); // too late for "tomorrow"
-          await bot.remindSoon(config.groupJid, v);
-          continue;
-        }
-
-        // "Tomorrow": timed events 2-24h out; date-only events from EVENING_REMINDER_HOUR the night before.
-        const tomorrowWindow = start
-          ? start - now.getTime() <= 24 * HOUR && start > now.getTime()
-          : v.date === todayISO(addDays(now, 1)) && now.getHours() >= config.eveningReminderHour;
-        if (tomorrowWindow && !store.reminderSent(v.id, '24h')) {
-          store.markReminder(v.id, '24h');
-          await bot.remindTomorrow(config.groupJid, v);
-          continue;
-        }
-
-        // Auto follow-up poll, ~2 days out (36-60h), once per event.
-        if (config.autoFollowup && v.date && !store.reminderSent(v.id, 'followup')) {
-          const t = (start ?? localDate(v.date).getTime()) - now.getTime();
-          const needsChasing = shortfall(v) > 0 || [...v.tentative, ...v.excused].some((a) => !a.from_poll);
-          if (t > 36 * HOUR && t <= 60 * HOUR && needsChasing) {
-            store.markReminder(v.id, 'followup');
-            await bot.followupPoll(config.groupJid, v);
-          }
-        }
-      }
+  const once = (key: string, kind: string) => {
+    if (store.reminderSent(key, kind)) return false;
+    store.markReminder(key, kind);
+    return true;
   };
-  cron.schedule('*/15 * * * *', reminderTick, { timezone: tz });
-  // Also check shortly after startup, so a restart right on :00/:15/:30/:45 can't skip a reminder.
-  // Off for now (testing the :00/:15/:30/:45 schedule on its own). Uncomment to re-enable.
-  // setTimeout(() => void reminderTick().catch((e) => console.error('[reminders] startup check failed', e)), 30_000);
 
+  // ---- Starting soon (every 15 min) ----
+  const soonTick = async () => {
+    if (!live()) return;
+    const now = Date.now();
+    for (const v of upcoming(store, 1)) {
+      if (!v.hasTime || !v.start) continue;
+      // Only events people signed up for or that need a headcount (skip e.g. nominations).
+      if (!v.required_count && !v.attendees.length) continue;
+      const until = v.start.getTime() - now;
+      if (until <= 0 || until > config.soonHours * HOUR) continue;
+      if (!once(v.id, '2h')) continue;
+      await bot.remindSoon(config.groupJid, v);
+    }
+  };
+  cron.schedule('*/15 * * * *', soonTick, { timezone: tz });
+  // Optional: also check 30s after startup, so a restart on :00/:15/:30/:45 can't skip one.
+  // setTimeout(() => void soonTick().catch((e) => console.error('[reminders] startup check failed', e)), 30_000);
+
+  // ---- Tomorrow (8 PM, every night but Monday) ----
   cron.schedule(
-    config.dailyDigestCron,
+    config.tomorrowCron,
     async () => {
       if (!live()) return;
-      const key = `daily-${todayISO()}`;
-      if (store.reminderSent(key, 'digest')) return;
-      store.markReminder(key, 'digest');
-      await bot.postDigest(config.groupJid, 2);
+      if (!once(`tomorrow-${todayISO()}`, 'post')) return;
+      await bot.postTomorrow(config.groupJid);
     },
     { timezone: tz },
   );
 
+  // ---- Monday digest (9 PM, held until the new minutes are in) ----
+  let weeklyPending = false;
+  const tryWeekly = async (): Promise<void> => {
+    if (!weeklyPending || !live()) return;
+    if (!bot.minutesFromToday()) {
+      console.log("[weekly] waiting: the minutes aren't from today's meeting yet");
+      return;
+    }
+    weeklyPending = false;
+    if (!once(`weekly-${todayISO()}`, 'post')) return;
+    await bot.postWeekly(config.groupJid);
+  };
   cron.schedule(
     config.weeklyDigestCron,
     async () => {
-      if (!live()) return;
-      const key = `weekly-${todayISO()}`;
-      if (store.reminderSent(key, 'digest')) return;
-      store.markReminder(key, 'digest');
-      await bot.postWeekly(config.groupJid);
+      weeklyPending = true;
+      await tryWeekly();
+    },
+    { timezone: tz },
+  );
+  // ---- Thursday need-bros nudge (6 PM) ----
+  cron.schedule(
+    config.needBrosCron,
+    async () => {
+      if (!config.needBrosNudge || !live()) return;
+      if (!once(`needbros-${todayISO()}`, 'post')) return;
+      await bot.postNeedBrosNudge(config.groupJid);
     },
     { timezone: tz },
   );
 
-  // Hourly: re-read the doc; extraction only re-runs if the doc revision changed.
-  cron.schedule('5 * * * *', () => void refreshTick(), { timezone: tz });
+  // ---- Hourly: re-read the minutes; if a held Monday digest was waiting on them, post it now ----
+  cron.schedule(
+    '5 * * * *',
+    async () => {
+      await refreshTick();
+      await tryWeekly();
+    },
+    { timezone: tz },
+  );
 }

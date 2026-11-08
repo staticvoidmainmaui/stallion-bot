@@ -48,13 +48,16 @@ export const config = {
   digestSticker: process.env.DIGEST_STICKER ?? 'assets/ufbetas-summary-sticker.webp',
   /** 512x512 WebP (Stallion's face) sent right before every automated post. Empty = none. */
   botSticker: process.env.BOT_STICKER ?? 'assets/stallion-sticker.webp',
-  /** Cron schedules (chapter time zone). */
-  weeklyDigestCron: process.env.WEEKLY_DIGEST_CRON || '0 12 * * 1',
-  dailyDigestCron: process.env.DAILY_DIGEST_CRON || '0 9 * * 2-7',
-  /** Date-only events (no clock time) get their "tomorrow" reminder at this hour the day before. */
-  eveningReminderHour: Number(process.env.EVENING_REMINDER_HOUR || 19),
-  /** Auto-post a follow-up poll ~2 days before events that are short or have unanswered maybes. */
-  autoFollowup: bool(process.env.AUTO_FOLLOWUP, false),
+  /** Automatic posting schedule (chapter time zone). See SCHEDULE.md. */
+  /** Monday night, after chapter: sticker + this week + need bros (only once the new minutes are in). */
+  weeklyDigestCron: process.env.WEEKLY_DIGEST_CRON || '0 21 * * 1',
+  /** Every other night: one "Tomorrow" post with all of tomorrow's events + tags. */
+  tomorrowCron: process.env.TOMORROW_CRON || '0 20 * * 0,2-6',
+  /** "Starting soon" this many hours before events with a sign-up list or required headcount. */
+  soonHours: Number(process.env.SOON_HOURS || 2),
+  /** Thursday evening: need-bros nudge + follow-up polls for short weekend / early-next-week events. */
+  needBrosCron: process.env.NEED_BROS_CRON || '0 18 * * 4',
+  needBrosNudge: bool(process.env.NEED_BROS_NUDGE, true),
   /** Minimum gap between outgoing WhatsApp messages. */
   sendGapMs: Number(process.env.SEND_GAP_MS || 1500),
 };
