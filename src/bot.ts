@@ -23,7 +23,9 @@ import { existsSync, readFileSync } from 'node:fs';
 import { addDays, between, findEvents, POLL_STATUS, shortfall, todayISO, upcoming, type EventView } from './events.js';
 import type { Glossary } from './glossary.js';
 import Anthropic from '@anthropic-ai/sdk';
-import { answer } from './ask.js';
+import { answer, composeReply, scrub } from './ask.js';
+import { DocReader, serviceAccountToken } from './docread.js';
+import { route } from './route.js';
 import * as M from './messages.js';
 import { minutesProblem } from './reminders.js';
 import type { RefreshResult } from './refresh.js';
@@ -44,6 +46,8 @@ export class Bot {
   sock: WASocket | null = null;
   private sendChain: Promise<unknown> = Promise.resolve();
   private meta: GroupMetadata | null = null;
+  /** The Q&A group's metadata (ASK_GROUP_JID), when set. */
+  private askMeta: GroupMetadata | null = null;
   /** phone digits -> participant id as the group addresses it (pn or lid) */
   private phoneToId = new Map<string, string>();
   /** participant id (lid or pn) -> phone digits */
@@ -80,7 +84,7 @@ export class Bot {
         const p = key.id ? this.store.getPoll(key.id) : undefined;
         return p ? (JSON.parse(p.message_json, BufferJSON.reviver) as WAMessage).message ?? undefined : undefined;
       },
-      cachedGroupMetadata: async (jid) => (this.meta && this.meta.id === jid ? this.meta : undefined),
+      cachedGroupMetadata: async (jid) => [this.meta, this.askMeta].find((g) => g?.id === jid) ?? undefined,
     });
     this.sock = sock;
 
@@ -134,28 +138,45 @@ export class Bot {
       }
     });
 
-    // Only reload when the bot's own group changes (on a personal number, other groups change constantly).
+    // Only reload when one of the bot's own groups changes (on a personal number, other groups change constantly).
+    const mine = (jid: string) => !!jid && (jid === config.groupJid || jid === config.askGroupJid);
     sock.ev.on('groups.update', (updates) => {
-      if (updates.some((g) => g.id === config.groupJid)) void this.loadGroup().catch(() => {});
+      if (updates.some((g) => g.id && mine(g.id))) void this.loadGroup().catch(() => {});
     });
     sock.ev.on('group-participants.update', (u) => {
-      if (u.id === config.groupJid) void this.loadGroup().catch(() => {});
+      if (mine(u.id)) void this.loadGroup().catch(() => {});
     });
   }
 
+  /** Load the alerts group and the Q&A group, and merge their phone <-> id maps so a sender is recognized in either. */
   async loadGroup(): Promise<void> {
-    if (!config.groupJid || !this.sock) return;
-    this.meta = await this.sock.groupMetadata(config.groupJid);
-    this.phoneToId.clear();
-    this.idToPhone.clear();
-    for (const p of this.meta.participants) {
-      const phone = digits(p.phoneNumber) || (p.id.endsWith('@s.whatsapp.net') ? digits(p.id) : '');
-      if (!phone) continue;
-      this.phoneToId.set(phone, p.id);
-      this.idToPhone.set(p.id, phone);
-      if (p.lid) this.idToPhone.set(p.lid, phone);
-    }
-    console.log(`[wa] group "${this.meta.subject}": ${this.meta.participants.length} members, ${this.phoneToId.size} with phone numbers`);
+    if (!this.sock) return;
+    const phoneToId = new Map<string, string>();
+    const idToPhone = new Map<string, string>();
+    const load = async (jid: string, label: string): Promise<GroupMetadata | null> => {
+      if (!jid || !this.sock) return null;
+      const meta = await this.sock.groupMetadata(jid);
+      for (const p of meta.participants) {
+        const phone = digits(p.phoneNumber) || (p.id.endsWith('@s.whatsapp.net') ? digits(p.id) : '');
+        if (!phone) continue;
+        // Alerts-group ids win (tags in alerts posts must use that group's addressing).
+        if (!phoneToId.has(phone)) phoneToId.set(phone, p.id);
+        idToPhone.set(p.id, phone);
+        if (p.lid) idToPhone.set(p.lid, phone);
+      }
+      console.log(`[wa] ${label} group "${meta.subject}": ${meta.participants.length} members`);
+      return meta;
+    };
+    this.meta = await load(config.groupJid, 'alerts');
+    this.askMeta =
+      config.askGroupJid && config.askGroupJid !== config.groupJid
+        ? await load(config.askGroupJid, 'Q&A').catch((e) => {
+            console.warn('[wa] Q&A group metadata failed:', (e as Error)?.message);
+            return null;
+          })
+        : null;
+    this.phoneToId = phoneToId;
+    this.idToPhone = idToPhone;
   }
 
   // ---------- sending ----------
@@ -235,25 +256,29 @@ export class Bot {
     const quotedId = content?.extendedTextMessage?.contextInfo?.stanzaId ?? undefined;
     const quoted = quotedId ? this.store.sentMessage(quotedId) : undefined;
 
-    if (!text.startsWith('!')) {
-      // Q&A, the only time the bot reads a non-command message:
-      // (a) a reply to one of the bot's own messages in the chapter group, (b) a DM, only if ASK_DMS=true.
-      if (!config.askEnabled || !text) return;
-      if (isJidGroup(chat)) {
-        if (chat === config.groupJid && quoted) await this.handleAsk(chat, m, text, quoted.eventIds);
-        return;
-      }
-      const isDm = chat.endsWith('@s.whatsapp.net') || chat.endsWith('@lid');
-      if (config.askDms && isDm && !m.key.fromMe) await this.handleAsk(chat, m, text, []);
-      return;
-    }
-    console.log(`[cmd] ${text.split(/\s+/)[0]} in ${chat}${m.key.fromMe ? ' (you)' : ''}${chat === config.groupJid ? '' : ' (not the configured group)'}`);
-    const [rawCmd, ...rest] = text.slice(1).split(/\s+/);
-    const cmd = rawCmd.toLowerCase();
-    const arg = rest.join(' ').trim();
+    // Where does this message go? (src/route.ts has every rule, with tests.)
+    const r = route({
+      chat,
+      isGroup: !!isJidGroup(chat),
+      fromMe: !!m.key.fromMe,
+      text,
+      quotedEventIds: quoted ? quoted.eventIds : null,
+      alertsJid: config.groupJid,
+      askJid: config.askGroupJid,
+      askEnabled: config.askEnabled,
+      askDms: config.askDms,
+    });
+    if (r.kind === 'ignore') return;
+    if (r.kind === 'ask') return void (await this.handleAsk(m, r.question, r.eventIds, r));
 
+    const { cmd, arg } = r;
+    console.log(`[cmd] !${cmd} in ${chat}${m.key.fromMe ? ' (you)' : ''}${chat === config.groupJid ? '' : chat === config.askGroupJid ? ' (Q&A chat)' : ' (not the configured group)'}`);
     // Setup helper: works in any chat so you can find the group's ID.
     if (cmd === 'groupid') return void (await this.reply(chat, M.groupId(chat)));
+    if (config.askGroupJid && chat === config.askGroupJid) {
+      if (cmd === 'help') await this.reply(chat, M.qaHelp());
+      return;
+    }
     if (!config.groupJid || chat !== config.groupJid || !isJidGroup(chat)) return;
     // Demo mode: everything outside the digest/reminder set stays silent.
     if (config.botMode === 'digest' && !DIGEST_MODE_COMMANDS.has(cmd)) return;
@@ -265,7 +290,7 @@ export class Bot {
       case 'help':
         return void (await this.reply(chat, M.help(config.botMode)));
       case 'ask':
-        return void (await this.handleAsk(chat, m, arg, quoted?.eventIds ?? []));
+        return void (await this.handleAsk(m, arg, quoted?.eventIds ?? [], { answerIn: chat, quote: true, tagAsker: false }));
       case 'events':
       {
         const evs = upcoming(this.store, Number(arg) || 7);
@@ -414,23 +439,35 @@ export class Bot {
     return { key: phone || m.key.participant || m.key.remoteJid || 'unknown', name: e?.name ?? null };
   }
 
-  /** Answer a question with the ask agent (src/ask.ts) and reply to the question message. */
-  async handleAsk(chat: string, m: WAMessage, question: string, eventIds: string[]): Promise<void> {
+  private docs: DocReader | null = null;
+
+  /**
+   * Answer a question with the ask agent (src/ask.ts).
+   * where.answerIn = the chat to post in; quote = quote the question (same chat); tagAsker = the answer moved
+   * from the alerts chat to the Q&A chat, so tag the asker and repeat their question.
+   */
+  async handleAsk(m: WAMessage, question: string, eventIds: string[], where: { answerIn: string; quote: boolean; tagAsker: boolean }): Promise<void> {
     if (!config.askEnabled) return;
-    if (!question.trim()) return void (await this.reply(chat, M.askHow(), [], m));
+    const quotedMsg = where.quote ? m : undefined;
+    if (!question.trim()) return void (await this.reply(where.answerIn, M.askHow(), [], quotedMsg));
     const who = this.sender(m);
     const day = todayISO();
     if (this.store.askCount(who.key, day) >= config.askDailyLimit) {
       console.log(`[ask] limit reached for ${who.name ?? who.key}`);
-      return void (await this.reply(chat, M.askLimit(config.askDailyLimit), [], m));
+      return void (await this.reply(where.answerIn, M.askLimit(config.askDailyLimit), [], quotedMsg));
     }
     this.store.bumpAsk(who.key, day);
     console.log(`[ask] ${who.name ?? who.key}${eventIds.length ? ` (re: ${eventIds.join(', ')})` : ''}: ${question.slice(0, 100)}`);
 
-    const seen = new Set(eventIds); // events the answer touched, so a reply to the answer keeps context
+    // The asker's tag, for answers posted in the Q&A chat about a question asked in the alerts chat.
+    const asker = where.tagAsker ? (who.name ? this.mention(who.name, who.name) : null) : null;
+    const askerJid = where.tagAsker ? (asker?.jid ?? m.key.participant ?? null) : null;
+    const askerTag = askerJid ? `@${askerJid.split('@')[0]}` : (asker?.tag ?? 'someone');
+
     try {
       this.anthropic ??= new Anthropic({ apiKey: config.anthropicApiKey });
-      const text = await answer(
+      this.docs ??= new DocReader({ getToken: serviceAccountToken(config.googleCredentials), scrub });
+      const result = await answer(
         question,
         { senderName: who.name, quotedEventIds: eventIds },
         {
@@ -440,18 +477,21 @@ export class Bot {
           client: this.anthropic,
           model: config.model,
           maxRounds: config.askMaxRounds,
+          docs: this.docs,
           onStep: (s) => {
-            if (s.type !== 'tool') return;
-            console.log(`[ask]   ${s.name} ${JSON.stringify(s.input)}`);
-            const id = (s.input as { event_id?: string })?.event_id;
-            if (id) seen.add(id);
+            if (s.type === 'tool') console.log(`[ask]   ${s.name} ${JSON.stringify(s.input)}`);
           },
         },
       );
-      await this.replyAbout(chat, M.askAnswer(text), 'ask', [...seen], [], m);
+      const out = composeReply(result, {
+        store: this.store,
+        quotedEventIds: eventIds,
+        asker: where.tagAsker ? { tag: askerTag, question } : null,
+      });
+      await this.replyAbout(where.answerIn, out.text, 'ask', out.eventIds, askerJid ? [askerJid] : [], quotedMsg);
     } catch (e) {
       console.error('[ask] failed:', (e as Error).message);
-      await this.reply(chat, M.askFailed(), [], m);
+      await this.reply(where.answerIn, M.askFailed(), [], quotedMsg);
     }
   }
 

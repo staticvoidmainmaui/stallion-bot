@@ -5,6 +5,7 @@
  *   npm run ask -- "who's going to mgc retreat?" --as Alejandro
  *   npm run ask -- "what's the dress code for the retreat?"
  *   npm run ask -- "where is this?" --about "mgc retreat"     (pretend you replied to a message about that event)
+ *   npm run ask -- "what room are mgc elections in?"           (may open a doc linked in the minutes)
  */
 import Anthropic from '@anthropic-ai/sdk';
 import { config } from '../src/config.js';
@@ -12,7 +13,8 @@ import { Store } from '../src/db.js';
 import { Roster } from '../src/roster.js';
 import { Glossary } from '../src/glossary.js';
 import { findEvents } from '../src/events.js';
-import { answer } from '../src/ask.js';
+import { answer, composeReply, scrub } from '../src/ask.js';
+import { DocReader, serviceAccountToken } from '../src/docread.js';
 import * as M from '../src/messages.js';
 
 const args = process.argv.slice(2);
@@ -51,7 +53,7 @@ console.log(bold(`\nQ: ${question}`));
 console.log(dim(`asked by: ${senderName ?? '(unknown)'}${quoted.length ? ` · replying about: ${quoted.join(', ')}` : ''} · model: ${config.model}\n`));
 
 const t0 = Date.now();
-const text = await answer(
+const result = await answer(
   question,
   { senderName, quotedEventIds: quoted },
   {
@@ -61,6 +63,7 @@ const text = await answer(
     client: new Anthropic({ apiKey: config.anthropicApiKey }),
     model: config.model,
     maxRounds: config.askMaxRounds,
+    docs: new DocReader({ getToken: serviceAccountToken(config.googleCredentials), scrub }),
     onStep: (s) => {
       if (s.type === 'model') {
         const what = s.toolCalls.length ? `asks for ${s.toolCalls.map((t) => `${t.name}(${JSON.stringify(t.input)})`).join(', ')}` : 'answers';
@@ -73,6 +76,8 @@ const text = await answer(
     },
   },
 );
-console.log(`\n${bold('What the group would see:')}\n${M.style(M.askAnswer(text))}`);
+const out = composeReply(result, { store, quotedEventIds: quoted });
+console.log(dim(`\nheader event: ${result.detailIds.length === 1 ? result.detailIds[0] : quoted.length === 1 && !result.detailIds.length ? quoted[0] : '(none)'} · docs read: ${result.docsRead.join(', ') || 'none'}`));
+console.log(`\n${bold('What the Q&A chat would see:')}\n${M.style(out.text)}`);
 console.log(dim(`\n(${((Date.now() - t0) / 1000).toFixed(1)}s)`));
 store.db.close();

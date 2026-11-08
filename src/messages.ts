@@ -96,8 +96,8 @@ ${LIST}!short · events that need bros
 ${LIST}!poll <name> · attendance poll
 ${LIST}!votes <name> · poll results
 ${LIST}!summary · chapter recap
-${LIST}!ask <question> · ask about events, sign-ups, the minutes
-${LIST}reply to any of my messages with a question
+${LIST}!ask <question> · or reply to any of my messages with a question
+Questions get answered in the Stallion Q&A chat.
 Exec: !tag · !followup · !goals · !digest · !weekly · !remind · !refresh · !members · !pause · !resume`;
 }
 
@@ -182,7 +182,29 @@ export function summary(meetingDate: string | null, needBros: EventView[], items
 export const noMinutes = () => `${SIG}\n\nNo minutes loaded yet. An exec can run \`!refresh\`.`;
 // ---------- ask (Q&A) ----------
 
-export const askAnswer = (text: string) => `${SIG}\n\n${text}`;
+/** "mgc retreat · sun 11/15 12p · arredondo cafe": the fixed first line of an answer about one event. Built by code, never by Claude. */
+export function answerHeader(v: EventView, now = new Date()): string {
+  return [v.name, when(v, now), place(v)].filter(Boolean).join(' · ');
+}
+
+/**
+ * A Q&A answer.
+ * - header: the code-built event line (answers about exactly one event), else null.
+ * - re: event names for context when the answer is posted in the Q&A chat for a question asked in alerts.
+ * - asker: "@<id>" tag + their question, when the answer is redirected to the Q&A chat.
+ */
+export function askAnswer(o: { body: string; header?: string | null; re?: string | null; asker?: { tag: string; question: string } | null }): string {
+  const lines: string[] = [];
+  if (o.asker) lines.push(`${o.asker.tag} asked: "${o.asker.question.length > 80 ? `${o.asker.question.slice(0, 79)}…` : o.asker.question}"`);
+  if (o.header) lines.push(o.asker ? `re: ${o.header}` : o.header);
+  else if (o.re) lines.push(`re: ${o.re}`);
+  if (o.body) lines.push(o.body);
+  return `${SIG}\n\n${lines.join('\n')}`;
+}
+
+/** !help inside the Q&A chat. */
+export const qaHelp = () =>
+  `${SIG}\n\n*Q&A*\nJust type a question here: events, dates, deadlines, places, who's going.\nReplies to my messages in the alerts chat get answered here too.`;
 
 // Tool messages for read_doc (Claude reads these, then tells the asker).
 export const docNotLinked = () => 'Not a linked doc: only links that appear in the minutes can be opened.';

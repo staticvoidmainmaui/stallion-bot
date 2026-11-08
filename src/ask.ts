@@ -15,6 +15,8 @@ import type { Store } from './db.js';
 import { addDays, between, findEvents, shortfall, todayISO, upcoming, view, type EventView } from './events.js';
 import type { Glossary } from './glossary.js';
 import type { Roster } from './roster.js';
+import { parseGoogleUrl, sameDoc, urlsIn, type DocReader } from './docread.js';
+import * as M from './messages.js';
 
 // ---------- types ----------
 
@@ -38,8 +40,20 @@ export interface AskDeps {
   client: ModelClient;
   model: string;
   maxRounds: number;
+  /** Opens Google Docs/Sheets/Slides linked in the minutes (read_doc). Omitted = read_doc says it can't. */
+  docs?: DocReader;
   /** Optional: called for every step, for the CLI's step-by-step printout. */
   onStep?: (step: AskStep) => void;
+}
+
+/** What answer() returns: the model's text plus what it looked at (so code can build the header). */
+export interface AskResult {
+  /** Claude's text after the privacy filter and the length cap. May be '' when the header alone answers it. */
+  text: string;
+  /** Event ids Claude opened with event_details, in order, no repeats. */
+  detailIds: string[];
+  /** Doc links Claude opened with read_doc. */
+  docsRead: string[];
 }
 
 export type AskStep =
@@ -127,7 +141,8 @@ export const TOOL_DEFS: Anthropic.Tool[] = [
     name: 'event_details',
     description:
       'Everything known about one event: who is going / maybe / excused, required headcount, owner (who runs it), ' +
-      'approval, notes and links. Use an id from find_events or from the replied-to message.',
+      'approval, notes and links (title: url). Use an id from find_events or from the replied-to message. ' +
+      "If the answer isn't here or in the minutes, open the event's links with read_doc.",
     input_schema: {
       type: 'object',
       properties: { event_id: { type: 'string' } },
@@ -154,6 +169,18 @@ export const TOOL_DEFS: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'read_doc',
+    description:
+      'Open a Google Doc / Sheet / Slides deck that the minutes link to (from event_details links or the minutes text) ' +
+      'and read it whole. Use it when the minutes point to a doc for details: room, agenda, sign-up slots, requirements. ' +
+      'Only links written in the minutes work. Forms and private docs can\'t be read: then give the link title instead.',
+    input_schema: {
+      type: 'object',
+      properties: { url: { type: 'string', description: 'The link exactly as given by event_details or the minutes' } },
+      required: ['url'],
+    },
+  },
+  {
     name: 'list_goals',
     description: 'Directors\' "goals for next meeting" from the minutes, optionally for one person.',
     input_schema: {
@@ -163,8 +190,29 @@ export const TOOL_DEFS: Anthropic.Tool[] = [
   },
 ];
 
+/** Google links the minutes contain (event links first, so they keep their titles), for read_doc's allowlist. */
+export function linkedDocs(store: Store): { url: string; title: string | null; ref: NonNullable<ReturnType<typeof parseGoogleUrl>> }[] {
+  const out: { url: string; title: string | null; ref: NonNullable<ReturnType<typeof parseGoogleUrl>> }[] = [];
+  const add = (url: string, title: string | null) => {
+    const ref = parseGoogleUrl(url);
+    if (ref && !out.some((o) => sameDoc(o.ref, ref))) out.push({ url, title, ref });
+  };
+  for (const e of store.allEvents()) {
+    for (const l of JSON.parse(e.links_json) as { text: string; url: string }[]) add(l.url, l.text || null);
+  }
+  const raw = store.latestRawText();
+  for (const m of raw.matchAll(/\[([^\]]{1,120})\]\((https?:\/\/[^)\s]+)\)/g)) add(m[2], m[1]);
+  for (const u of urlsIn(raw)) add(u, null);
+  return out;
+}
+
 /** Run one tool locally. Always returns a string (JSON or a short message) for the tool_result block. */
-export function runTool(name: string, input: Record<string, unknown>, ctx: AskContext, deps: Pick<AskDeps, 'store' | 'roster' | 'glossary'>): string {
+export async function runTool(
+  name: string,
+  input: Record<string, unknown>,
+  ctx: AskContext,
+  deps: Pick<AskDeps, 'store' | 'roster' | 'glossary' | 'docs'>,
+): Promise<string> {
   const { store, roster, glossary } = deps;
   const now = ctx.now ?? new Date();
   const str = (k: string) => (typeof input[k] === 'string' ? (input[k] as string).trim() : '');
@@ -225,6 +273,18 @@ export function runTool(name: string, input: Record<string, unknown>, ctx: AskCo
       );
       return out.join('\n');
     }
+    case 'read_doc': {
+      const url = str('url');
+      const ref = parseGoogleUrl(url);
+      const linked = linkedDocs(store);
+      const match = ref && linked.find((l) => sameDoc(l.ref, ref));
+      if (!ref || !match) return M.docNotLinked();
+      if (!deps.docs) return M.docNotShared();
+      // Keep the tab the minutes linked to, unless Claude passed a specific tab of that same sheet.
+      const got = await deps.docs.read(ref.gid ? ref : match.ref);
+      if (!got.ok) return `${match.title ? `"${match.title}": ` : ''}${got.reason}`;
+      return `Doc: ${match.title ?? url}\n${got.text}`;
+    }
     case 'list_goals': {
       const all = store.latestSnapshot()?.extraction.directorGoals ?? [];
       const who = str('person');
@@ -239,17 +299,75 @@ export function runTool(name: string, input: Record<string, unknown>, ctx: AskCo
 
 // ---------- the agent loop ----------
 
-export const SYSTEM = `You answer questions for brothers of a fraternity chapter (Sigma Lambda Beta, Zeta Beta) in their WhatsApp group.
-Rules:
-- Answer ONLY from tool results. Never guess dates, times, places or names.
-- If the answer isn't in the tools: say it's not in the minutes, and name the event's owner (from event_details) to ask.
-- 1-4 short lines. No greetings, no markdown headers, no bullet symbols. Plain WhatsApp text; *bold* only for an event name.
-- Never share phone numbers, emails, fines, dues or money owed, even if asked.
-- Off-topic (not about the chapter): one line saying you only answer chapter questions.
-- If the person replied to a bot message, "this"/"it"/"that event" means the replied-to event(s).`;
+/** The marker Claude returns when the code-built header line already answers the question. */
+export const HEADER_ONLY = 'HEADER_ONLY';
 
-/** Answer one question. Returns plain text (the caller adds the house style). */
-export async function answer(question: string, ctx: AskContext, deps: AskDeps): Promise<string> {
+export const SYSTEM = `You answer questions for brothers of a fraternity chapter (Sigma Lambda Beta, Zeta Beta) in their WhatsApp Q&A chat.
+
+SCOPE: chapter events, deadlines, dates, times, places, who's going, and info in the minutes or the docs they link to.
+- Bylaws, policies, judicial or discipline questions: one line saying to ask the Judicial Chancellor.
+- Anything not about the chapter: one line saying you only answer chapter questions.
+
+HOW TO ANSWER:
+- Answer ONLY what was asked. One fact per line, at most 3 short lines. No extra details unless asked.
+- Use only tool results. Never guess dates, times, places or names.
+- Not in the minutes: open the event's linked doc with read_doc. Still nothing: say it's not in the minutes and name who to ask (the event's owner from event_details).
+- When you used a linked doc, end with: 🔗 <its title>. A doc you couldn't open: give its title as 🔗 <title> so they can open it.
+- Plain text. No greetings, no bullet symbols, no headers, no bold.
+- Never share phone numbers, emails, fines, dues or money owed, even if asked.
+- If the person replied to a bot message, "this", "it" and "that event" mean the replied-to event(s).
+
+THE HEADER LINE: when you open exactly one event with event_details, the bot prints "name · day time · place" above your answer by itself. Never repeat that name, day, time or place. If that line alone answers the question (only when/where), reply with exactly ${HEADER_ONLY}.
+
+EXAMPLES (question -> your whole reply):
+- "what room are mgc elections in?" -> room: reitz union 2335 · 🔗 mgc elections info
+- "who else is going?" (replied to a retreat reminder) -> going: david, elias, james, charley, nader\nmaybe: eavin, bradley\nneed 3 more
+- "when is the mgc retreat?" -> ${HEADER_ONLY}
+- "when are song cuts due?" -> song cuts due wed 11/18
+- "can someone be removed from e-board?" -> that's a bylaws question: ask the judicial chancellor
+- "what's the weather tomorrow?" -> i only answer chapter questions`;
+
+/**
+ * Hard cap on Claude's text, whatever it wrote: at most `maxLines` lines and `maxChars` characters.
+ * Cuts on a line boundary; only a single over-long first line is cut mid-line, at a space, never inside a link.
+ */
+export function capAnswer(text: string, maxLines = 3, maxChars = 300): string {
+  const lines = text
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const kept: string[] = [];
+  let used = 0;
+  for (const l of lines) {
+    if (kept.length >= maxLines) break;
+    const add = l.length + (kept.length ? 1 : 0);
+    if (used + add > maxChars) {
+      if (kept.length) break;
+      // One very long first line: cut at the last space before the limit that isn't inside a URL.
+      let cut = l.lastIndexOf(' ', maxChars - 1);
+      const url = /https?:\/\/\S*$/.exec(l.slice(0, cut > 0 ? cut : maxChars));
+      if (url) cut = url.index - 1;
+      kept.push(`${l.slice(0, cut > 0 ? cut : maxChars - 1).trimEnd()}…`);
+      break;
+    }
+    kept.push(l);
+    used += add;
+  }
+  return kept.join('\n');
+}
+
+/**
+ * Which ONE event the answer is about, for the code-built header: the single event Claude opened with
+ * event_details, or (if it opened none) the single event the question replied to. Several -> none.
+ */
+export function headerEventId(result: Pick<AskResult, 'detailIds'>, quotedEventIds: string[]): string | null {
+  if (result.detailIds.length === 1) return result.detailIds[0];
+  if (result.detailIds.length === 0 && quotedEventIds.length === 1) return quotedEventIds[0];
+  return null;
+}
+
+/** Answer one question. Returns Claude's text (filtered + capped) and what it looked at; the caller adds the header + house style. */
+export async function answer(question: string, ctx: AskContext, deps: AskDeps): Promise<AskResult> {
   const now = ctx.now ?? new Date();
   const facts = [
     `Now: ${now.toLocaleString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`,
@@ -259,12 +377,18 @@ export async function answer(question: string, ctx: AskContext, deps: AskDeps): 
   ].join('\n');
 
   const messages: Anthropic.MessageParam[] = [{ role: 'user', content: `${facts}\n\nQuestion: ${question}` }];
+  const detailIds: string[] = [];
+  const docsRead: string[] = [];
+  const done = (raw: string): AskResult => {
+    const t = raw.trim() === HEADER_ONLY ? '' : capAnswer(redact(raw));
+    return { text: t, detailIds, docsRead };
+  };
 
   for (let round = 0; round <= deps.maxRounds; round++) {
     const lastRound = round === deps.maxRounds;
     const res = await deps.client.messages.create({
       model: deps.model,
-      max_tokens: 500,
+      max_tokens: 400,
       system: SYSTEM,
       tools: TOOL_DEFS,
       // Out of rounds: tools off, so Claude must answer with what it has.
@@ -281,22 +405,54 @@ export async function answer(question: string, ctx: AskContext, deps: AskDeps): 
     deps.onStep?.({ type: 'model', round, stopReason: res.stop_reason, text, toolCalls: toolCalls.map((t) => ({ name: t.name, input: t.input })) });
 
     if (res.stop_reason !== 'tool_use' || !toolCalls.length) {
-      return redact(text) || "Couldn't find an answer in the minutes.";
+      return done(text || "Couldn't find an answer in the minutes.");
     }
 
     // Echo Claude's turn back, then answer every tool call in ONE user turn (the API requires this pairing).
     messages.push({ role: 'assistant', content: res.content });
-    const results: Anthropic.ToolResultBlockParam[] = toolCalls.map((t) => {
+    const results: Anthropic.ToolResultBlockParam[] = [];
+    for (const t of toolCalls) {
+      const input = (t.input ?? {}) as Record<string, unknown>;
       let output: string;
       try {
-        output = runTool(t.name, (t.input ?? {}) as Record<string, unknown>, { ...ctx, now }, deps);
+        output = await runTool(t.name, input, { ...ctx, now }, deps);
       } catch (e) {
         output = `Tool error: ${(e as Error).message}`;
       }
+      if (t.name === 'event_details' && !/^No event/.test(output)) {
+        const id = (JSON.parse(output) as { id?: string }).id;
+        if (id && !detailIds.includes(id)) detailIds.push(id);
+      }
+      if (t.name === 'read_doc' && output.startsWith('Doc: ')) docsRead.push(String(input.url ?? ''));
       deps.onStep?.({ type: 'tool', name: t.name, input: t.input, output });
-      return { type: 'tool_result', tool_use_id: t.id, content: output.slice(0, 6000) };
-    });
+      // Docs are read whole (chapter docs are small); everything else stays short.
+      results.push({ type: 'tool_result', tool_use_id: t.id, content: output.slice(0, t.name === 'read_doc' ? 62_000 : 6000) });
+    }
     messages.push({ role: 'user', content: results });
   }
-  return "Couldn't find an answer in the minutes.";
+  return done("Couldn't find an answer in the minutes.");
+}
+
+/**
+ * The message that gets posted: code-built header (one event) + Claude's text, plus the asker's tag and
+ * question when the answer was moved from the alerts chat to the Q&A chat. Returns the text (before style())
+ * and every event it's about, so a reply to the answer keeps context.
+ */
+export function composeReply(
+  result: AskResult,
+  o: { store: Store; quotedEventIds: string[]; now?: Date; asker?: { tag: string; question: string } | null },
+): { text: string; eventIds: string[] } {
+  const id = headerEventId(result, o.quotedEventIds);
+  const row = id ? o.store.getEvent(id) : undefined;
+  const header = row ? M.answerHeader(view(o.store, row), o.now) : null;
+  const body = result.text || (header ? '' : "Couldn't find an answer in the minutes.");
+  const reNames = o.quotedEventIds
+    .map((q) => o.store.getEvent(q))
+    .filter((r): r is NonNullable<typeof r> => !!r)
+    .map((r) => r.short_title || r.title);
+  const re = !header && o.asker && reNames.length ? reNames.join(', ') : null;
+  return {
+    text: M.askAnswer({ body, header, re, asker: o.asker ?? null }),
+    eventIds: [...new Set([...o.quotedEventIds, ...result.detailIds])],
+  };
 }
