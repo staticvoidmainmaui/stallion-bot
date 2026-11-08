@@ -131,8 +131,13 @@ export class Bot {
       }
     });
 
-    sock.ev.on('groups.update', () => void this.loadGroup().catch(() => {}));
-    sock.ev.on('group-participants.update', () => void this.loadGroup().catch(() => {}));
+    // Only reload when the bot's own group changes (on a personal number, other groups change constantly).
+    sock.ev.on('groups.update', (updates) => {
+      if (updates.some((g) => g.id === config.groupJid)) void this.loadGroup().catch(() => {});
+    });
+    sock.ev.on('group-participants.update', (u) => {
+      if (u.id === config.groupJid) void this.loadGroup().catch(() => {});
+    });
   }
 
   async loadGroup(): Promise<void> {
