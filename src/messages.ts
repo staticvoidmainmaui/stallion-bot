@@ -86,7 +86,8 @@ export function help(mode: 'all' | 'digest'): string {
     return `${SIG}\n\n*Commands*
 ${LIST}!digest · next 2 days
 ${LIST}!weekly · this week (Monday digest)
-${LIST}!remind · send tomorrow's reminders now`;
+${LIST}!remind · send tomorrow's reminders now
+${LIST}!ask <question> · or reply to any of my messages with a question`;
   }
   return `${SIG}\n\n*Commands*
 ${LIST}!events · this week
@@ -95,6 +96,8 @@ ${LIST}!short · events that need bros
 ${LIST}!poll <name> · attendance poll
 ${LIST}!votes <name> · poll results
 ${LIST}!summary · chapter recap
+${LIST}!ask <question> · ask about events, sign-ups, the minutes
+${LIST}reply to any of my messages with a question
 Exec: !tag · !followup · !goals · !digest · !weekly · !remind · !refresh · !members · !pause · !resume`;
 }
 
@@ -177,6 +180,13 @@ export function summary(meetingDate: string | null, needBros: EventView[], items
 }
 
 export const noMinutes = () => `${SIG}\n\nNo minutes loaded yet. An exec can run \`!refresh\`.`;
+// ---------- ask (Q&A) ----------
+
+export const askAnswer = (text: string) => `${SIG}\n\n${text}`;
+export const askHow = () => `${SIG}\n\nAsk me about chapter events: \`!ask who's going to mgc retreat?\`, or reply to any of my messages with a question.`;
+export const askLimit = (n: number) => `${SIG}\n\nThat's your ${n} questions for today. Try again tomorrow.`;
+export const askFailed = () => `${SIG}\n\nCouldn't answer that right now. Try again in a bit.`;
+
 export const paused = () => `${SIG}\n\n⏸️ Automatic posts paused. Commands still work. \`!resume\` to turn them back on.`;
 export const resumed = () => `${SIG}\n\n▶️ Automatic posts back on.`;
 export const refreshing = () => `${SIG}\n\nReading the minutes…`;
