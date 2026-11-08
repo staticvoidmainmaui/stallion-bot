@@ -6,12 +6,27 @@ import type { Bot } from './bot.js';
 
 const HOUR = 3_600_000;
 
+/** "22:30" -> minutes after midnight. */
+const mins = (hhmm: string) => {
+  const [h, m] = hhmm.split(':').map(Number);
+  return h * 60 + (m || 0);
+};
+
+/** Quiet hours (default 10:30 PM - 8:00 AM): nothing automatic posts. Handles windows that cross midnight. */
+export function isQuiet(now = new Date()): boolean {
+  const t = now.getHours() * 60 + now.getMinutes();
+  const a = mins(config.quietStart);
+  const b = mins(config.quietEnd);
+  return a <= b ? t >= a && t < b : t >= a || t < b;
+}
+
 /**
  * Automatic posts (chapter time zone). Full write-up in SCHEDULE.md.
  * - WEEKLY_DIGEST_CRON (Mon 9 PM): sticker + this week + need bros, held until the minutes are from today.
  * - TOMORROW_CRON (8 PM, every night but Monday): one post with all of tomorrow's events + tags.
  * - every 15 min: "Starting soon" SOON_HOURS before events with a sign-up list or required headcount.
  * - NEED_BROS_CRON (Thu 6 PM): need-bros list + a follow-up poll per short event (Fri - next Tue).
+ * - Quiet hours QUIET_START - QUIET_END: nothing posts; anything due waits.
  * - hourly :05: re-read the minutes (only calls Claude when the file changed).
  */
 export function startReminders(store: Store, bot: Bot, refreshTick: () => Promise<void>): void {
@@ -25,7 +40,7 @@ export function startReminders(store: Store, bot: Bot, refreshTick: () => Promis
 
   // ---- Starting soon (every 15 min) ----
   const soonTick = async () => {
-    if (!live()) return;
+    if (!live() || isQuiet()) return;
     const now = Date.now();
     for (const v of upcoming(store, 1)) {
       if (!v.hasTime || !v.start) continue;
@@ -45,7 +60,7 @@ export function startReminders(store: Store, bot: Bot, refreshTick: () => Promis
   cron.schedule(
     config.tomorrowCron,
     async () => {
-      if (!live()) return;
+      if (!live() || isQuiet()) return;
       if (!once(`tomorrow-${todayISO()}`, 'post')) return;
       await bot.postTomorrow(config.groupJid);
     },
@@ -55,7 +70,7 @@ export function startReminders(store: Store, bot: Bot, refreshTick: () => Promis
   // ---- Monday digest (9 PM, held until the new minutes are in) ----
   let weeklyPending = false;
   const tryWeekly = async (): Promise<void> => {
-    if (!weeklyPending || !live()) return;
+    if (!weeklyPending || !live() || isQuiet()) return;
     if (!bot.minutesFromToday()) {
       console.log("[weekly] waiting: the minutes aren't from today's meeting yet");
       return;
@@ -72,11 +87,21 @@ export function startReminders(store: Store, bot: Bot, refreshTick: () => Promis
     },
     { timezone: tz },
   );
+  // Give up on a held digest at quiet hours (it would be stale by morning).
+  cron.schedule(
+    `${config.quietStart.split(':')[1] ?? '0'} ${config.quietStart.split(':')[0]} * * 1`,
+    () => {
+      if (weeklyPending) console.log('[weekly] skipped: new minutes never came in Monday night');
+      weeklyPending = false;
+    },
+    { timezone: tz },
+  );
+
   // ---- Thursday need-bros nudge (6 PM) ----
   cron.schedule(
     config.needBrosCron,
     async () => {
-      if (!config.needBrosNudge || !live()) return;
+      if (!config.needBrosNudge || !live() || isQuiet()) return;
       if (!once(`needbros-${todayISO()}`, 'post')) return;
       await bot.postNeedBrosNudge(config.groupJid);
     },

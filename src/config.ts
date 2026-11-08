@@ -58,6 +58,9 @@ export const config = {
   /** Thursday evening: need-bros nudge + follow-up polls for short weekend / early-next-week events. */
   needBrosCron: process.env.NEED_BROS_CRON || '0 18 * * 4',
   needBrosNudge: bool(process.env.NEED_BROS_NUDGE, true),
+  /** Nothing automatic posts between these times; anything due waits until QUIET_END. */
+  quietStart: process.env.QUIET_START || '22:30',
+  quietEnd: process.env.QUIET_END || '08:00',
   /** Minimum gap between outgoing WhatsApp messages. */
   sendGapMs: Number(process.env.SEND_GAP_MS || 1500),
 };
