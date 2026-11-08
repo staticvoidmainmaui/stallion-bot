@@ -12,7 +12,8 @@
     "flatten-check": "tsx scripts/flatten-check.ts",
     "parse-fixture": "tsx scripts/parse-fixture.ts",
     "ask": "tsx scripts/ask-cli.ts",
-    "ask-test": "tsx scripts/ask-test.ts"
+    "ask-test": "tsx scripts/ask-test.ts",
+    "ask-eval": "tsx scripts/ask-eval.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "1.3.0",
