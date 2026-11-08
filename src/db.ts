@@ -103,6 +103,10 @@ export class Store {
         sent_at TEXT NOT NULL,
         PRIMARY KEY (event_id, kind)
       );
+      CREATE TABLE IF NOT EXISTS bot_state (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS short_names (
         title_key TEXT PRIMARY KEY,
         short TEXT NOT NULL
@@ -260,6 +264,24 @@ export class Store {
 
   reminderSent(eventIdValue: string, kind: string): boolean {
     return !!this.db.prepare('SELECT 1 FROM reminders_sent WHERE event_id = ? AND kind = ?').get(eventIdValue, kind);
+  }
+
+  getState(key: string): string | null {
+    return (this.db.prepare('SELECT value FROM bot_state WHERE key = ?').get(key) as { value: string } | undefined)?.value ?? null;
+  }
+
+  setState(key: string, value: string | null): void {
+    if (value === null) this.db.prepare('DELETE FROM bot_state WHERE key = ?').run(key);
+    else this.db.prepare('INSERT OR REPLACE INTO bot_state (key, value) VALUES (?, ?)').run(key, value);
+  }
+
+  /** Automatic posts sent since `sinceIso` (each "2h" reminder or scheduled "post" counts as one). */
+  autoPostsSince(sinceIso: string): number {
+    return (
+      this.db
+        .prepare("SELECT COUNT(*) AS n FROM reminders_sent WHERE kind IN ('2h', 'post') AND sent_at >= ?")
+        .get(sinceIso) as { n: number }
+    ).n;
   }
 
   markReminder(eventIdValue: string, kind: string): void {
