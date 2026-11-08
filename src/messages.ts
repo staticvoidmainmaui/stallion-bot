@@ -95,7 +95,7 @@ ${LIST}!short · events that need bros
 ${LIST}!poll <name> · attendance poll
 ${LIST}!votes <name> · poll results
 ${LIST}!summary · chapter recap
-Exec: !tag · !followup · !goals · !digest · !weekly · !remind · !refresh · !members`;
+Exec: !tag · !followup · !goals · !digest · !weekly · !remind · !refresh · !members · !pause · !resume`;
 }
 
 export function events(evs: EventView[], days: number, now = new Date()): string {
@@ -177,6 +177,8 @@ export function summary(meetingDate: string | null, needBros: EventView[], items
 }
 
 export const noMinutes = () => `${SIG}\n\nNo minutes loaded yet. An exec can run \`!refresh\`.`;
+export const paused = () => `${SIG}\n\n⏸️ Automatic posts paused. Commands still work. \`!resume\` to turn them back on.`;
+export const resumed = () => `${SIG}\n\n▶️ Automatic posts back on.`;
 export const refreshing = () => `${SIG}\n\nReading the minutes…`;
 export function refreshed(events: number, meetingDate: string | null, unknown: string[]): string {
   return `${SIG}\n\n✅ ${events} events loaded · meeting ${meetingDate ? fmtDate(meetingDate) : '?'}${

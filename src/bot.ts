@@ -30,7 +30,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const digits = (jid: string | null | undefined) => (jid ?? '').split('@')[0].split(':')[0].replace(/\D/g, '');
 
 /** Commands allowed when BOT_MODE=digest (demo). */
-const DIGEST_MODE_COMMANDS = new Set(['help', 'digest', 'weekly', 'remind', 'groupid', 'refresh']);
+const DIGEST_MODE_COMMANDS = new Set(['help', 'digest', 'weekly', 'remind', 'groupid', 'refresh', 'pause', 'resume']);
 
 export interface Mention {
   tag: string;
@@ -262,6 +262,16 @@ export class Bot {
         return void (exec ? await this.postTomorrowReminders(chat, true) : await execOnly());
       case 'refresh':
         return void (exec ? await this.cmdRefresh(chat) : await execOnly());
+      case 'pause':
+        if (!exec) return void (await execOnly());
+        this.store.setState('paused', new Date().toISOString());
+        console.log('[auto] paused by', chat);
+        return void (await this.reply(chat, M.paused()));
+      case 'resume':
+        if (!exec) return void (await execOnly());
+        this.store.setState('paused', null);
+        console.log('[auto] resumed');
+        return void (await this.reply(chat, M.resumed()));
       case 'members':
         return void (exec ? await this.cmdMembers(chat) : await execOnly());
       default:
