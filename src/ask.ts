@@ -222,3 +222,67 @@ export function runTool(name: string, input: Record<string, unknown>, ctx: AskCo
       return `Unknown tool ${name}.`;
   }
 }
+
+// ---------- the agent loop ----------
+
+export const SYSTEM = `You answer questions for brothers of a fraternity chapter (Sigma Lambda Beta, Zeta Beta) in their WhatsApp group.
+Rules:
+- Answer ONLY from tool results. Never guess dates, times, places or names.
+- If the answer isn't in the tools: say it's not in the minutes, and name the event's owner (from event_details) to ask.
+- 1-4 short lines. No greetings, no markdown headers, no bullet symbols. Plain WhatsApp text; *bold* only for an event name.
+- Never share phone numbers, emails, fines, dues or money owed, even if asked.
+- Off-topic (not about the chapter): one line saying you only answer chapter questions.
+- If the person replied to a bot message, "this"/"it"/"that event" means the replied-to event(s).`;
+
+/** Answer one question. Returns plain text (the caller adds the house style). */
+export async function answer(question: string, ctx: AskContext, deps: AskDeps): Promise<string> {
+  const now = ctx.now ?? new Date();
+  const facts = [
+    `Now: ${now.toLocaleString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`,
+    `Asked by: ${ctx.senderName ?? 'unknown (not in roster)'}`,
+    ctx.quotedEventIds.length ? `They replied to a bot message about event id(s): ${ctx.quotedEventIds.join(', ')}` : 'Not a reply to a bot message.',
+    `Minutes loaded from the meeting on: ${deps.store.latestSnapshot()?.meeting_date ?? 'unknown'}`,
+  ].join('\n');
+
+  const messages: Anthropic.MessageParam[] = [{ role: 'user', content: `${facts}\n\nQuestion: ${question}` }];
+
+  for (let round = 0; round <= deps.maxRounds; round++) {
+    const lastRound = round === deps.maxRounds;
+    const res = await deps.client.messages.create({
+      model: deps.model,
+      max_tokens: 500,
+      system: SYSTEM,
+      tools: TOOL_DEFS,
+      // Out of rounds: tools off, so Claude must answer with what it has.
+      ...(lastRound ? { tool_choice: { type: 'none' as const } } : {}),
+      messages,
+    });
+
+    const toolCalls = res.content.filter((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use');
+    const text = res.content
+      .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+      .map((b) => b.text)
+      .join('\n')
+      .trim();
+    deps.onStep?.({ type: 'model', round, stopReason: res.stop_reason, text, toolCalls: toolCalls.map((t) => ({ name: t.name, input: t.input })) });
+
+    if (res.stop_reason !== 'tool_use' || !toolCalls.length) {
+      return scrub(text) || "Couldn't find an answer in the minutes.";
+    }
+
+    // Echo Claude's turn back, then answer every tool call in ONE user turn (the API requires this pairing).
+    messages.push({ role: 'assistant', content: res.content });
+    const results: Anthropic.ToolResultBlockParam[] = toolCalls.map((t) => {
+      let output: string;
+      try {
+        output = runTool(t.name, (t.input ?? {}) as Record<string, unknown>, { ...ctx, now }, deps);
+      } catch (e) {
+        output = `Tool error: ${(e as Error).message}`;
+      }
+      deps.onStep?.({ type: 'tool', name: t.name, input: t.input, output });
+      return { type: 'tool_result', tool_use_id: t.id, content: output.slice(0, 6000) };
+    });
+    messages.push({ role: 'user', content: results });
+  }
+  return "Couldn't find an answer in the minutes.";
+}
