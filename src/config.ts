@@ -70,6 +70,11 @@ export const config = {
   /** Q&A ("ask"): reply to any bot message, or !ask <question>. Answers come only from the minutes + bot data. */
   askEnabled: bool(process.env.ASK_ENABLED, true),
   /**
+   * The "Stallion Q&A" group. Every message there is a question (no !ask needed). Questions asked in the
+   * alerts chat (replies to the bot, !ask) are answered there too. Empty = answer in the alerts chat.
+   */
+  askGroupJid: process.env.ASK_GROUP_JID ?? '',
+  /**
    * Also answer direct messages to the bot's number. KEEP OFF while the bot runs on a personal number:
    * it would answer every DM you receive that looks like a question.
    */
