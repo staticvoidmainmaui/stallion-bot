@@ -183,6 +183,11 @@ export const noMinutes = () => `${SIG}\n\nNo minutes loaded yet. An exec can run
 // ---------- ask (Q&A) ----------
 
 export const askAnswer = (text: string) => `${SIG}\n\n${text}`;
+
+// Tool messages for read_doc (Claude reads these, then tells the asker).
+export const docNotLinked = () => 'Not a linked doc: only links that appear in the minutes can be opened.';
+export const docCantRead = () => "Can't be read (a form or another kind of file). Share the link instead.";
+export const docNotShared = () => "Couldn't open (not shared with the bot). Share the link instead.";
 export const askHow = () => `${SIG}\n\nAsk me about chapter events: \`!ask who's going to mgc retreat?\`, or reply to any of my messages with a question.`;
 export const askLimit = (n: number) => `${SIG}\n\nThat's your ${n} questions for today. Try again tomorrow.`;
 export const askFailed = () => `${SIG}\n\nCouldn't answer that right now. Try again in a bit.`;
