@@ -107,6 +107,18 @@ export class Store {
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS sent_messages (
+        msg_id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        event_ids_json TEXT NOT NULL,
+        sent_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS ask_usage (
+        sender TEXT NOT NULL,
+        day TEXT NOT NULL,
+        n INTEGER NOT NULL,
+        PRIMARY KEY (sender, day)
+      );
       CREATE TABLE IF NOT EXISTS short_names (
         title_key TEXT PRIMARY KEY,
         short TEXT NOT NULL
@@ -282,6 +294,40 @@ export class Store {
         .prepare("SELECT COUNT(*) AS n FROM reminders_sent WHERE kind IN ('2h', 'post') AND sent_at >= ?")
         .get(sinceIso) as { n: number }
     ).n;
+  }
+
+  // ---------- ask (Q&A) ----------
+
+  /** Remember which event(s) a bot message was about, so a reply to it ("where is this?") has context. */
+  recordSent(msgId: string, kind: string, eventIds: string[]): void {
+    this.db
+      .prepare('INSERT OR REPLACE INTO sent_messages (msg_id, kind, event_ids_json, sent_at) VALUES (?, ?, ?, ?)')
+      .run(msgId, kind, JSON.stringify(eventIds), new Date().toISOString());
+  }
+
+  sentMessage(msgId: string): { kind: string; eventIds: string[] } | undefined {
+    const row = this.db.prepare('SELECT kind, event_ids_json FROM sent_messages WHERE msg_id = ?').get(msgId) as
+      | { kind: string; event_ids_json: string }
+      | undefined;
+    return row && { kind: row.kind, eventIds: JSON.parse(row.event_ids_json) as string[] };
+  }
+
+  /** Raw text of the latest minutes (for search_minutes). */
+  latestRawText(): string {
+    const row = this.db.prepare('SELECT raw_text FROM snapshots ORDER BY id DESC LIMIT 1').get() as { raw_text: string } | undefined;
+    return row?.raw_text ?? '';
+  }
+
+  /** Count one question for `sender` today; returns the new total. */
+  bumpAsk(sender: string, day: string): number {
+    this.db
+      .prepare('INSERT INTO ask_usage (sender, day, n) VALUES (?, ?, 1) ON CONFLICT(sender, day) DO UPDATE SET n = n + 1')
+      .run(sender, day);
+    return (this.db.prepare('SELECT n FROM ask_usage WHERE sender = ? AND day = ?').get(sender, day) as { n: number }).n;
+  }
+
+  askCount(sender: string, day: string): number {
+    return (this.db.prepare('SELECT n FROM ask_usage WHERE sender = ? AND day = ?').get(sender, day) as { n: number } | undefined)?.n ?? 0;
   }
 
   markReminder(eventIdValue: string, kind: string): void {
