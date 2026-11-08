@@ -1,3 +1,5 @@
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { config } from './config.js';
 import { Store } from './db.js';
 import { Roster } from './roster.js';
@@ -5,6 +7,34 @@ import { Glossary } from './glossary.js';
 import { refresh } from './refresh.js';
 import { Bot } from './bot.js';
 import { startReminders } from './reminders.js';
+
+// One bot at a time: a second copy on the same WhatsApp login fights the first (code 428 disconnects)
+// and could double-post. The lock holds the running copy's process id.
+const LOCK = join(dirname(config.dbPath), 'bot.lock');
+mkdirSync(dirname(LOCK), { recursive: true });
+if (existsSync(LOCK)) {
+  const pid = Number(readFileSync(LOCK, 'utf8'));
+  let alive = false;
+  try {
+    if (pid && pid !== process.pid) process.kill(pid, 0), (alive = true);
+  } catch {
+    /* not running: stale lock */
+  }
+  if (alive) {
+    console.error(`[stallion] another copy of the bot is already running (pid ${pid}). Stop it first (Ctrl+C in its window).`);
+    process.exit(1);
+  }
+}
+writeFileSync(LOCK, String(process.pid));
+const unlock = () => {
+  try {
+    if (Number(readFileSync(LOCK, 'utf8')) === process.pid) unlinkSync(LOCK);
+  } catch {
+    /* already gone */
+  }
+};
+process.on('exit', unlock);
+for (const sig of ['SIGINT', 'SIGTERM'] as const) process.on(sig, () => process.exit(0));
 
 const store = new Store(config.dbPath);
 const roster = Roster.load(config.rosterPath);
