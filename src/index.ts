@@ -6,7 +6,7 @@ import { Roster } from './roster.js';
 import { Glossary } from './glossary.js';
 import { refresh } from './refresh.js';
 import { Bot } from './bot.js';
-import { startReminders } from './reminders.js';
+import { minutesProblem, startReminders } from './reminders.js';
 
 // One bot at a time: a second copy on the same WhatsApp login fights the first (code 428 disconnects)
 // and could double-post. The lock holds the running copy's process id.
@@ -58,6 +58,10 @@ async function main(): Promise<void> {
   // Re-apply glossary/roster to the last extraction so name edits show up without a paid re-read.
   const re = store.reapplyLatest(roster, glossary);
   if (re?.unknown.length) console.log('[minutes] names not in roster:', re.unknown.join(', '));
+  const mp = minutesProblem(store);
+  if (mp) console.log(`[auto] automatic posts held: ${mp}`);
+  if (store.getState('paused')) console.log('[auto] automatic posts are PAUSED (send !resume)');
+  if (config.autoDryRun) console.log('[auto] AUTO_DRY_RUN=true: automatic posts are only logged, not sent');
   console.log(`[stallion] tz=${config.tz} model=${config.model} mode=${config.botMode} reminders=${config.remindersEnabled ? 'on' : 'off'} group=${config.groupJid || '(unset — only !groupid works)'}`);
   await refreshTick();
   const bot = new Bot(store, roster, glossary, doRefresh);
