@@ -67,6 +67,17 @@ export const config = {
   staleMinutesDays: Number(process.env.STALE_MINUTES_DAYS || 9),
   /** Safety: log what would post instead of posting (try new settings without touching the group). */
   autoDryRun: bool(process.env.AUTO_DRY_RUN, false),
+  /** Q&A ("ask"): reply to any bot message, or !ask <question>. Answers come only from the minutes + bot data. */
+  askEnabled: bool(process.env.ASK_ENABLED, true),
+  /**
+   * Also answer direct messages to the bot's number. KEEP OFF while the bot runs on a personal number:
+   * it would answer every DM you receive that looks like a question.
+   */
+  askDms: bool(process.env.ASK_DMS, false),
+  /** Questions per person per day. */
+  askDailyLimit: Number(process.env.ASK_DAILY_LIMIT || 20),
+  /** Most tool-call rounds the agent may take before it has to answer. */
+  askMaxRounds: Number(process.env.ASK_MAX_ROUNDS || 4),
   /** Minimum gap between outgoing WhatsApp messages. */
   sendGapMs: Number(process.env.SEND_GAP_MS || 1500),
 };
