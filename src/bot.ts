@@ -22,6 +22,8 @@ import type { Store } from './db.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { addDays, between, findEvents, POLL_STATUS, shortfall, todayISO, upcoming, type EventView } from './events.js';
 import type { Glossary } from './glossary.js';
+import Anthropic from '@anthropic-ai/sdk';
+import { answer } from './ask.js';
 import * as M from './messages.js';
 import { minutesProblem } from './reminders.js';
 import type { RefreshResult } from './refresh.js';
@@ -31,7 +33,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const digits = (jid: string | null | undefined) => (jid ?? '').split('@')[0].split(':')[0].replace(/\D/g, '');
 
 /** Commands allowed when BOT_MODE=digest (demo). */
-const DIGEST_MODE_COMMANDS = new Set(['help', 'digest', 'weekly', 'remind', 'groupid', 'refresh', 'pause', 'resume']);
+const DIGEST_MODE_COMMANDS = new Set(['help', 'digest', 'weekly', 'remind', 'groupid', 'refresh', 'pause', 'resume', 'ask']);
 
 export interface Mention {
   tag: string;
@@ -159,10 +161,10 @@ export class Bot {
   // ---------- sending ----------
 
   /** All outgoing messages go through one queue with a minimum gap (keeps volume human-like). */
-  send(jid: string, content: AnyMessageContent): Promise<WAMessage | undefined> {
+  send(jid: string, content: AnyMessageContent, opts: { quoted?: WAMessage } = {}): Promise<WAMessage | undefined> {
     const run = this.sendChain.then(async () => {
       if (!this.sock) throw new Error('not connected');
-      const r = await this.sock.sendMessage(jid, content);
+      const r = await this.sock.sendMessage(jid, content, opts.quoted ? { quoted: opts.quoted } : undefined);
       if (r?.key.id) {
         this.sentIds.add(r.key.id);
         if (this.sentIds.size > 500) this.sentIds.delete(this.sentIds.values().next().value as string);
@@ -174,8 +176,18 @@ export class Bot {
     return run;
   }
 
-  reply(jid: string, text: string, mentions: string[] = []): Promise<WAMessage | undefined> {
-    return this.send(jid, { text: M.style(text), mentions });
+  reply(jid: string, text: string, mentions: string[] = [], quoted?: WAMessage): Promise<WAMessage | undefined> {
+    return this.send(jid, { text: M.style(text), mentions }, { quoted });
+  }
+
+  /**
+   * Reply, and remember which event(s) the message was about. A brother who later replies to this
+   * message with a question ("where is this?") gets those events as context.
+   */
+  async replyAbout(jid: string, text: string, kind: string, eventIds: string[], mentions: string[] = [], quoted?: WAMessage) {
+    const r = await this.reply(jid, text, mentions, quoted);
+    if (r?.key.id) this.store.recordSent(r.key.id, kind, eventIds);
+    return r;
   }
 
   mention(rosterName: string | null, rawName: string): Mention {
@@ -219,7 +231,22 @@ export class Bot {
     // Unwrap disappearing / view-once / edited wrappers before reading the text.
     const content = normalizeMessageContent(m.message);
     const text = (content?.conversation || content?.extendedTextMessage?.text || '').trim();
-    if (!text.startsWith('!')) return;
+    // If this message quotes (replies to) one of the bot's messages, which events was that message about?
+    const quotedId = content?.extendedTextMessage?.contextInfo?.stanzaId ?? undefined;
+    const quoted = quotedId ? this.store.sentMessage(quotedId) : undefined;
+
+    if (!text.startsWith('!')) {
+      // Q&A, the only time the bot reads a non-command message:
+      // (a) a reply to one of the bot's own messages in the chapter group, (b) a DM, only if ASK_DMS=true.
+      if (!config.askEnabled || !text) return;
+      if (isJidGroup(chat)) {
+        if (chat === config.groupJid && quoted) await this.handleAsk(chat, m, text, quoted.eventIds);
+        return;
+      }
+      const isDm = chat.endsWith('@s.whatsapp.net') || chat.endsWith('@lid');
+      if (config.askDms && isDm && !m.key.fromMe) await this.handleAsk(chat, m, text, []);
+      return;
+    }
     console.log(`[cmd] ${text.split(/\s+/)[0]} in ${chat}${m.key.fromMe ? ' (you)' : ''}${chat === config.groupJid ? '' : ' (not the configured group)'}`);
     const [rawCmd, ...rest] = text.slice(1).split(/\s+/);
     const cmd = rawCmd.toLowerCase();
@@ -237,12 +264,20 @@ export class Bot {
     switch (cmd) {
       case 'help':
         return void (await this.reply(chat, M.help(config.botMode)));
+      case 'ask':
+        return void (await this.handleAsk(chat, m, arg, quoted?.eventIds ?? []));
       case 'events':
-        return void (await this.reply(chat, M.events(upcoming(this.store, Number(arg) || 7), Number(arg) || 7)));
+      {
+        const evs = upcoming(this.store, Number(arg) || 7);
+        return void (await this.replyAbout(chat, M.events(evs, Number(arg) || 7), 'events', evs.map((v) => v.id)));
+      }
       case 'event':
         return void (await this.cmdEvent(chat, arg));
       case 'short':
-        return void (await this.reply(chat, M.short(this.needBros(21))));
+      {
+        const evs = this.needBros(21);
+        return void (await this.replyAbout(chat, M.short(evs), 'short', evs.map((v) => v.id)));
+      }
       case 'tag':
         return void (exec ? await this.cmdTag(chat, arg) : await execOnly());
       case 'followup':
@@ -309,7 +344,7 @@ export class Bot {
 
   async cmdEvent(chat: string, query: string): Promise<void> {
     const v = await this.pickOne(chat, query);
-    if (v) await this.reply(chat, M.eventDetail(v));
+    if (v) await this.replyAbout(chat, M.eventDetail(v), 'event', [v.id]);
   }
 
   async cmdTag(chat: string, query: string): Promise<void> {
@@ -318,13 +353,13 @@ export class Bot {
     const rows = [...v.going, ...v.tentative];
     if (!rows.length) return void (await this.reply(chat, M.nobodySignedUp(v)));
     const m = this.mentionList(rows);
-    await this.reply(chat, M.tag(v, m.text), m.jids);
+    await this.replyAbout(chat, M.tag(v, m.text), 'tag', [v.id], m.jids);
   }
 
   /** Follow-up = tag the maybes/excused, then post a poll so answers land in the database. */
   async followupPoll(chat: string, v: EventView): Promise<void> {
     const m = this.mentionList(this.unanswered(v));
-    await this.reply(chat, M.followup(v, m.text), m.jids);
+    await this.replyAbout(chat, M.followup(v, m.text), 'followup', [v.id], m.jids);
     await this.sendPoll(chat, v);
   }
 
@@ -366,6 +401,58 @@ export class Bot {
       msgId,
       agg.flatMap((o) => o.voters.map((voter) => ({ voter, option: o.name, voterName: this.rosterNameFor(voter) }))),
     );
+  }
+
+  // ---------- ask (Q&A) ----------
+
+  private anthropic: Anthropic | null = null;
+
+  /** Who sent this message: a stable key for rate limiting + their roster name if we know them. */
+  private sender(m: WAMessage): { key: string; name: string | null } {
+    const phone = m.key.fromMe ? digits(this.sock?.user?.id) : this.senderPhone(m);
+    const e = phone ? this.roster.entries.find((r) => r.phone === phone) : undefined;
+    return { key: phone || m.key.participant || m.key.remoteJid || 'unknown', name: e?.name ?? null };
+  }
+
+  /** Answer a question with the ask agent (src/ask.ts) and reply to the question message. */
+  async handleAsk(chat: string, m: WAMessage, question: string, eventIds: string[]): Promise<void> {
+    if (!config.askEnabled) return;
+    if (!question.trim()) return void (await this.reply(chat, M.askHow(), [], m));
+    const who = this.sender(m);
+    const day = todayISO();
+    if (this.store.askCount(who.key, day) >= config.askDailyLimit) {
+      console.log(`[ask] limit reached for ${who.name ?? who.key}`);
+      return void (await this.reply(chat, M.askLimit(config.askDailyLimit), [], m));
+    }
+    this.store.bumpAsk(who.key, day);
+    console.log(`[ask] ${who.name ?? who.key}${eventIds.length ? ` (re: ${eventIds.join(', ')})` : ''}: ${question.slice(0, 100)}`);
+
+    const seen = new Set(eventIds); // events the answer touched, so a reply to the answer keeps context
+    try {
+      this.anthropic ??= new Anthropic({ apiKey: config.anthropicApiKey });
+      const text = await answer(
+        question,
+        { senderName: who.name, quotedEventIds: eventIds },
+        {
+          store: this.store,
+          roster: this.roster,
+          glossary: this.glossary,
+          client: this.anthropic,
+          model: config.model,
+          maxRounds: config.askMaxRounds,
+          onStep: (s) => {
+            if (s.type !== 'tool') return;
+            console.log(`[ask]   ${s.name} ${JSON.stringify(s.input)}`);
+            const id = (s.input as { event_id?: string })?.event_id;
+            if (id) seen.add(id);
+          },
+        },
+      );
+      await this.replyAbout(chat, M.askAnswer(text), 'ask', [...seen], [], m);
+    } catch (e) {
+      console.error('[ask] failed:', (e as Error).message);
+      await this.reply(chat, M.askFailed(), [], m);
+    }
   }
 
   private rosterNameFor(jid: string): string | null {
@@ -464,7 +551,7 @@ export class Bot {
       return false;
     }
     await this.botSticker(chat);
-    await this.reply(chat, text);
+    await this.replyAbout(chat, text, 'digest', evs.map((v) => v.id));
     return true;
   }
 
@@ -477,20 +564,22 @@ export class Bot {
     // Today (whatever hasn't happened yet) through the next 6 days.
     const evs = between(this.store, todayISO(now), todayISO(addDays(now, 6)), now);
     // Weekly gets only the chapter-summary sticker, not Stallion's face sticker.
-    await this.reply(chat, M.weekly(evs, this.needBros(21), config.chapterTime, config.chapterLocation, now));
+    const need = this.needBros(21);
+    const ids = [...new Set([...evs, ...need].map((v) => v.id))];
+    await this.replyAbout(chat, M.weekly(evs, need, config.chapterTime, config.chapterLocation, now), 'weekly', ids);
   }
 
   /** "Tomorrow" reminder for one event, tagging everyone going or maybe. */
   async remindTomorrow(chat: string, v: EventView): Promise<void> {
     const m = this.mentionList([...v.going, ...v.tentative]);
     await this.botSticker(chat);
-    await this.reply(chat, M.reminderTomorrow(v, m.text), m.jids);
+    await this.replyAbout(chat, M.reminderTomorrow(v, m.text), 'tomorrow', [v.id], m.jids);
   }
 
   async remindSoon(chat: string, v: EventView): Promise<void> {
     const m = this.mentionList([...v.going, ...v.tentative]);
     await this.botSticker(chat);
-    await this.reply(chat, M.reminderSoon(v, m.text), m.jids);
+    await this.replyAbout(chat, M.reminderSoon(v, m.text), 'soon', [v.id], m.jids);
   }
 
   /**
@@ -515,7 +604,7 @@ export class Bot {
     const m = this.mentionList(rows);
     for (const v of evs) this.store.markReminder(v.id, '24h');
     await this.botSticker(chat);
-    await this.reply(chat, M.tomorrowPost(evs, tmrw, m.text, now), m.jids);
+    await this.replyAbout(chat, M.tomorrowPost(evs, tmrw, m.text, now), 'tomorrow', evs.map((v) => v.id), m.jids);
     return true;
   }
 
@@ -532,7 +621,7 @@ export class Bot {
       .slice(0, 3);
     if (!evs.length) return false;
     await this.botSticker(chat);
-    await this.reply(chat, M.needBrosNudge(evs, now));
+    await this.replyAbout(chat, M.needBrosNudge(evs, now), 'needbros', evs.map((v) => v.id));
     for (const v of evs) await this.sendPoll(chat, v);
     return true;
   }
