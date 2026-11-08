@@ -46,6 +46,8 @@ export const config = {
   chapterLocation: process.env.CHAPTER_LOCATION || 'McCarty B G108',
   /** 512x512 WebP sent before the Monday digest. Empty = no sticker. */
   digestSticker: process.env.DIGEST_STICKER ?? 'assets/ufbetas-summary-sticker.webp',
+  /** 512x512 WebP (Stallion's face) sent right before every automated post. Empty = none. */
+  botSticker: process.env.BOT_STICKER ?? 'assets/stallion-sticker.webp',
   /** Cron schedules (chapter time zone). */
   weeklyDigestCron: process.env.WEEKLY_DIGEST_CRON || '0 12 * * 1',
   dailyDigestCron: process.env.DAILY_DIGEST_CRON || '0 9 * * 2-7',

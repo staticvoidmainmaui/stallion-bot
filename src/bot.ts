@@ -431,6 +431,12 @@ export class Bot {
 
   // ---------- digests & reminders (also called by the scheduler) ----------
 
+  /** Stallion's face sticker, posted right before each automated message. */
+  private async botSticker(chat: string): Promise<void> {
+    const s = config.botSticker;
+    if (s && existsSync(s)) await this.send(chat, { sticker: readFileSync(s) });
+  }
+
   /** Next `days` days. After 6pm "today" is over, so the window starts tomorrow (good for a post-chapter run). */
   async postDigest(chat: string, days = 2, manual = false): Promise<boolean> {
     const now = new Date();
@@ -441,6 +447,7 @@ export class Bot {
       if (manual) await this.reply(chat, M.events([], days));
       return false;
     }
+    await this.botSticker(chat);
     await this.reply(chat, text);
     return true;
   }
@@ -453,17 +460,20 @@ export class Bot {
     const now = new Date();
     // Today (whatever hasn't happened yet) through the next 6 days.
     const evs = between(this.store, todayISO(now), todayISO(addDays(now, 6)), now);
+    await this.botSticker(chat);
     await this.reply(chat, M.weekly(evs, this.needBros(21), config.chapterTime, config.chapterLocation, now));
   }
 
   /** "Tomorrow" reminder for one event, tagging everyone going or maybe. */
   async remindTomorrow(chat: string, v: EventView): Promise<void> {
     const m = this.mentionList([...v.going, ...v.tentative]);
+    await this.botSticker(chat);
     await this.reply(chat, M.reminderTomorrow(v, m.text), m.jids);
   }
 
   async remindSoon(chat: string, v: EventView): Promise<void> {
     const m = this.mentionList([...v.going, ...v.tentative]);
+    await this.botSticker(chat);
     await this.reply(chat, M.reminderSoon(v, m.text), m.jids);
   }
 
