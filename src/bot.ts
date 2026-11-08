@@ -23,6 +23,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { addDays, between, findEvents, POLL_STATUS, shortfall, todayISO, upcoming, type EventView } from './events.js';
 import type { Glossary } from './glossary.js';
 import * as M from './messages.js';
+import { minutesProblem } from './reminders.js';
 import type { RefreshResult } from './refresh.js';
 import type { Roster } from './roster.js';
 
@@ -545,7 +546,7 @@ export class Bot {
     await this.reply(chat, M.refreshing());
     try {
       const r = await this.doRefresh(true);
-      await this.reply(chat, M.refreshed(r.events, r.meetingDate, r.unknown));
+      await this.reply(chat, M.refreshed(r.events, r.meetingDate, r.unknown, minutesProblem(this.store)));
     } catch (e) {
       await this.reply(chat, M.refreshFailed((e as Error).message));
     }

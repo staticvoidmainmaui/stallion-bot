@@ -180,10 +180,10 @@ export const noMinutes = () => `${SIG}\n\nNo minutes loaded yet. An exec can run
 export const paused = () => `${SIG}\n\n⏸️ Automatic posts paused. Commands still work. \`!resume\` to turn them back on.`;
 export const resumed = () => `${SIG}\n\n▶️ Automatic posts back on.`;
 export const refreshing = () => `${SIG}\n\nReading the minutes…`;
-export function refreshed(events: number, meetingDate: string | null, unknown: string[]): string {
+export function refreshed(events: number, meetingDate: string | null, unknown: string[], problem: string | null = null): string {
   return `${SIG}\n\n✅ ${events} events loaded · meeting ${meetingDate ? fmtDate(meetingDate) : '?'}${
     unknown.length ? `\n❓ Not in roster: ${unknown.join(', ')}` : ''
-  }`;
+  }${problem ? `\n⚠️ Automatic posts held: ${problem}` : ''}`;
 }
 export const refreshFailed = (err: string) => `${SIG}\n\n❌ Couldn't read the minutes: ${err}`;
 export const membersPrinted = (n: number) => `${SIG}\n\nPrinted ${n} members to the bot's console (not posted here).`;
