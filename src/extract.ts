@@ -59,7 +59,9 @@ const ExtractionSchema = z.object({
 export type ExtractedEvent = z.infer<typeof EventSchema>;
 export type Extraction = z.infer<typeof ExtractionSchema>;
 
-const SYSTEM = `You extract structured data from a fraternity chapter's weekly meeting minutes (a Google Doc flattened to indented text; "- " bullets nest by indentation, links appear as [text](url)).
+const SYSTEM = `You extract structured data from a fraternity chapter's weekly meeting minutes (a Google Doc flattened to indented text, or its Markdown export; "- ", "* " and "1. " bullets nest by indentation, links appear as [text](url)).
+
+LINKS: copy every [text](url) written inside an event's block (its own lines and the lines nested under it) into that event's links, with the link's own text. Docs, sheets, forms and sign-up links all count. Never invent a link.
 
 TITLES: an event's title is its own name. Do not borrow a neighbouring heading (e.g. nominations under "Chapter Elections" are "Chapter Elections Nominations (Round 1)", not "Brotherhood Retreat ..."). Use shortTitle for a 2-4 word name with org short codes.
 
