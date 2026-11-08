@@ -1,7 +1,7 @@
 import cron from 'node-cron';
 import { config } from './config.js';
 import type { Store } from './db.js';
-import { todayISO, upcoming } from './events.js';
+import { addDays, todayISO, upcoming } from './events.js';
 import type { Bot } from './bot.js';
 
 const HOUR = 3_600_000;
@@ -20,6 +20,16 @@ export function isQuiet(now = new Date()): boolean {
   return a <= b ? t >= a && t < b : t >= a || t < b;
 }
 
+/** Why the loaded minutes shouldn't drive automatic posts right now, or null if they're fine. */
+export function minutesProblem(store: Store, now = new Date()): string | null {
+  const md = store.latestSnapshot()?.meeting_date;
+  if (!md) return 'no minutes loaded';
+  if (md > todayISO(now)) return `meeting date ${md} is in the future (check the DATE line in the minutes)`;
+  if (md < todayISO(addDays(now, -config.staleMinutesDays)))
+    return `minutes are from ${md}, over ${config.staleMinutesDays} days old (load this week's minutes)`;
+  return null;
+}
+
 /**
  * Automatic posts (chapter time zone). Full write-up in SCHEDULE.md.
  * - WEEKLY_DIGEST_CRON (Mon 9 PM): sticker + this week + need bros, held until the minutes are from today.
@@ -32,15 +42,40 @@ export function isQuiet(now = new Date()): boolean {
 export function startReminders(store: Store, bot: Bot, refreshTick: () => Promise<void>): void {
   const tz = config.tz;
   const live = () => config.remindersEnabled && !!config.groupJid && !!bot.sock;
-  const once = (key: string, kind: string) => {
-    if (store.reminderSent(key, kind)) return false;
+  const midnightIso = () => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d.toISOString();
+  };
+
+  /** Every automatic post passes these checks. Commands typed in the group don't. */
+  const blocked = (): string | null => {
+    if (!live()) return 'not connected or REMINDERS_ENABLED=false';
+    if (isQuiet()) return 'quiet hours';
+    if (store.getState('paused')) return 'paused (send !resume to turn back on)';
+    const mp = minutesProblem(store);
+    if (mp) return mp;
+    if (store.autoPostsSince(midnightIso()) >= config.maxAutoPostsPerDay)
+      return `daily limit of ${config.maxAutoPostsPerDay} automatic posts reached`;
+    return null;
+  };
+
+  /**
+   * Post once per (key, kind), only if nothing blocks it. Marked sent *before* posting, so a crash
+   * mid-send can never cause a repeat (worst case a post is missed, never doubled).
+   */
+  const post = async (what: string, key: string, kind: string, send: () => Promise<unknown>): Promise<void> => {
+    if (store.reminderSent(key, kind)) return;
+    const why = blocked();
+    if (why) return void console.log(`[auto] held "${what}": ${why}`);
+    if (config.autoDryRun) return void console.log(`[auto] dry run, would post "${what}"`);
     store.markReminder(key, kind);
-    return true;
+    console.log(`[auto] posting "${what}"`);
+    await send();
   };
 
   // ---- Starting soon (every 15 min) ----
   const soonTick = async () => {
-    if (!live() || isQuiet()) return;
     const now = Date.now();
     for (const v of upcoming(store, 1)) {
       if (!v.hasTime || !v.start) continue;
@@ -48,8 +83,7 @@ export function startReminders(store: Store, bot: Bot, refreshTick: () => Promis
       if (!v.required_count && !v.attendees.length) continue;
       const until = v.start.getTime() - now;
       if (until <= 0 || until > config.soonHours * HOUR) continue;
-      if (!once(v.id, '2h')) continue;
-      await bot.remindSoon(config.groupJid, v);
+      await post(`starting soon: ${v.name}`, v.id, '2h', () => bot.remindSoon(config.groupJid, v));
     }
   };
   cron.schedule('*/15 * * * *', soonTick, { timezone: tz });
@@ -60,9 +94,7 @@ export function startReminders(store: Store, bot: Bot, refreshTick: () => Promis
   cron.schedule(
     config.tomorrowCron,
     async () => {
-      if (!live() || isQuiet()) return;
-      if (!once(`tomorrow-${todayISO()}`, 'post')) return;
-      await bot.postTomorrow(config.groupJid);
+      await post('tomorrow', `tomorrow-${todayISO()}`, 'post', () => bot.postTomorrow(config.groupJid));
     },
     { timezone: tz },
   );
@@ -70,14 +102,13 @@ export function startReminders(store: Store, bot: Bot, refreshTick: () => Promis
   // ---- Monday digest (9 PM, held until the new minutes are in) ----
   let weeklyPending = false;
   const tryWeekly = async (): Promise<void> => {
-    if (!weeklyPending || !live() || isQuiet()) return;
+    if (!weeklyPending) return;
     if (!bot.minutesFromToday()) {
       console.log("[weekly] waiting: the minutes aren't from today's meeting yet");
       return;
     }
     weeklyPending = false;
-    if (!once(`weekly-${todayISO()}`, 'post')) return;
-    await bot.postWeekly(config.groupJid);
+    await post('weekly digest', `weekly-${todayISO()}`, 'post', () => bot.postWeekly(config.groupJid));
   };
   cron.schedule(
     config.weeklyDigestCron,
@@ -101,9 +132,8 @@ export function startReminders(store: Store, bot: Bot, refreshTick: () => Promis
   cron.schedule(
     config.needBrosCron,
     async () => {
-      if (!config.needBrosNudge || !live() || isQuiet()) return;
-      if (!once(`needbros-${todayISO()}`, 'post')) return;
-      await bot.postNeedBrosNudge(config.groupJid);
+      if (!config.needBrosNudge) return;
+      await post('need-bros nudge', `needbros-${todayISO()}`, 'post', () => bot.postNeedBrosNudge(config.groupJid));
     },
     { timezone: tz },
   );

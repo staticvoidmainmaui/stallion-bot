@@ -61,6 +61,12 @@ export const config = {
   /** Nothing automatic posts between these times; anything due waits until QUIET_END. */
   quietStart: process.env.QUIET_START || '22:30',
   quietEnd: process.env.QUIET_END || '08:00',
+  /** Safety: most automatic posts allowed per day. Anything past this is held and logged. */
+  maxAutoPostsPerDay: Number(process.env.MAX_AUTO_POSTS_PER_DAY || 8),
+  /** Safety: automatic posts pause when the minutes' meeting date is older than this, or in the future. */
+  staleMinutesDays: Number(process.env.STALE_MINUTES_DAYS || 9),
+  /** Safety: log what would post instead of posting (try new settings without touching the group). */
+  autoDryRun: bool(process.env.AUTO_DRY_RUN, false),
   /** Minimum gap between outgoing WhatsApp messages. */
   sendGapMs: Number(process.env.SEND_GAP_MS || 1500),
 };
