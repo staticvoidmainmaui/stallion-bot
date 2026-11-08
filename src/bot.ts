@@ -341,7 +341,7 @@ export class Bot {
     for (const v of targets) await this.followupPoll(chat, v);
   }
 
-  private async sendPoll(chat: string, v: EventView): Promise<void> {
+  async sendPoll(chat: string, v: EventView): Promise<void> {
     const sent = await this.send(chat, {
       poll: { name: M.style(M.pollTitle(v), { mono: false }), values: M.POLL_OPTIONS, selectableCount: 1 },
     });
@@ -492,18 +492,53 @@ export class Bot {
     await this.reply(chat, M.reminderSoon(v, m.text), m.jids);
   }
 
-  /** !remind: send tomorrow's reminders right now (marks them sent so the scheduler doesn't repeat them). */
-  async postTomorrowReminders(chat: string, manual = false): Promise<void> {
-    const tmrw = todayISO(addDays(new Date(), 1));
-    const evs = between(this.store, tmrw, tmrw);
+  /**
+   * One "Tomorrow" post: every event tomorrow, then one tag line for everyone going or maybe.
+   * Used by the 8 PM schedule and by !remind. Returns false when there's nothing tomorrow.
+   */
+  async postTomorrow(chat: string, manual = false): Promise<boolean> {
+    const now = new Date();
+    const tmrw = todayISO(addDays(now, 1));
+    const evs = between(this.store, tmrw, tmrw, now);
     if (!evs.length) {
-      if (manual) await this.reply(chat, M.digest([]) ?? `${M.SIG} Nothing on the calendar tomorrow.`);
-      return;
+      if (manual) await this.reply(chat, `${M.SIG}\n\nNothing on the calendar tomorrow.`);
+      return false;
     }
-    for (const v of evs) {
-      this.store.markReminder(v.id, '24h');
-      await this.remindTomorrow(chat, v);
-    }
+    const seen = new Set<string>();
+    const rows = evs.flatMap((v) => [...v.going, ...v.tentative]).filter((a) => {
+      const k = a.roster_name ?? a.raw_name;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+    const m = this.mentionList(rows);
+    for (const v of evs) this.store.markReminder(v.id, '24h');
+    await this.botSticker(chat);
+    await this.reply(chat, M.tomorrowPost(evs, tmrw, m.text, now), m.jids);
+    return true;
+  }
+
+  /** !remind keeps working: same as the 8 PM post, on demand. */
+  async postTomorrowReminders(chat: string, manual = false): Promise<void> {
+    await this.postTomorrow(chat, manual);
+  }
+
+  /** Thursday nudge: short events Fri through next Tue, a list, then a poll for each (max 3). */
+  async postNeedBrosNudge(chat: string): Promise<boolean> {
+    const now = new Date();
+    const evs = between(this.store, todayISO(addDays(now, 1)), todayISO(addDays(now, 5)), now)
+      .filter((v) => shortfall(v) > 0)
+      .slice(0, 3);
+    if (!evs.length) return false;
+    await this.botSticker(chat);
+    await this.reply(chat, M.needBrosNudge(evs, now));
+    for (const v of evs) await this.sendPoll(chat, v);
+    return true;
+  }
+
+  /** True when the loaded minutes are from today's meeting (used to hold the Monday digest until they are). */
+  minutesFromToday(): boolean {
+    return this.store.latestSnapshot()?.meeting_date === todayISO();
   }
 
   async cmdRefresh(chat: string): Promise<void> {
