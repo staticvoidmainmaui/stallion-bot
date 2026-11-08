@@ -211,6 +211,21 @@ export function reminderSoon(v: EventView, mentions: string): string {
   return [head, mentions].filter(Boolean).join('\n');
 }
 
+/** 8 PM "Tomorrow" post: every event tomorrow in one message, then one line tagging everyone signed up. */
+export function tomorrowPost(evs: EventView[], date: string, mentions: string, now = new Date()): string {
+  const lines = evs.map((v) => {
+    const s = shortfall(v);
+    const extra = [place(v), s ? `⚠️ need ${s} more` : ''].filter(Boolean).join(' · ');
+    return `${line(v, now, { day: false, bullet: DIGEST_BULLET })}${extra ? ` · ${extra}` : ''}`;
+  });
+  return [`${SIG}\n\n*Tomorrow · ${fmtDate(date)}*`, ...lines, mentions].filter(Boolean).join('\n');
+}
+
+/** Thursday nudge, sent before the follow-up polls. */
+export function needBrosNudge(evs: EventView[], now = new Date()): string {
+  return `${SIG}\n\n⚠️ *Need bros*\n${needLines(evs, now, DIGEST_BULLET)}\nVote in the polls below 👇`;
+}
+
 /** Day-grouped list: "*Tue 11/3*" then that day's events. */
 function byDay(evs: EventView[], now: Date): string {
   const days = [...new Set(evs.map((v) => v.date ?? ''))];
