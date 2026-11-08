@@ -69,6 +69,20 @@ export function scrub(text: string): string {
     .join('\n');
 }
 
+/**
+ * For Claude's final answer: hide phone numbers, emails and dollar amounts in place (keep the rest of
+ * the sentence), and drop any line that's about fines/dues/money owed.
+ */
+export function redact(text: string): string {
+  return scrub(
+    text
+      .replace(/[\w.+-]+@[\w-]+\.[\w.]+/g, '[hidden]')
+      .replace(/\(?\b\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g, '[hidden]')
+      .replace(/\b1?\d{10}\b/g, '[hidden]')
+      .replace(/\$\s?\d[\d,.]*/g, '[hidden]'),
+  );
+}
+
 /** JSON.stringify that hides any sensitive string value (keeps the rest of the object). */
 export const safeJson = (v: unknown) => JSON.stringify(v, (_k, val) => (typeof val === 'string' && isSensitive(val) ? '[hidden]' : val));
 
@@ -267,7 +281,7 @@ export async function answer(question: string, ctx: AskContext, deps: AskDeps): 
     deps.onStep?.({ type: 'model', round, stopReason: res.stop_reason, text, toolCalls: toolCalls.map((t) => ({ name: t.name, input: t.input })) });
 
     if (res.stop_reason !== 'tool_use' || !toolCalls.length) {
-      return scrub(text) || "Couldn't find an answer in the minutes.";
+      return redact(text) || "Couldn't find an answer in the minutes.";
     }
 
     // Echo Claude's turn back, then answer every tool call in ONE user turn (the API requires this pairing).
