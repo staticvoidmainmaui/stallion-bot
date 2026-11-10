@@ -447,8 +447,9 @@ export class Bot {
 
   /** Monday digest: UF Betas sticker, then chapter tonight + this week + who we need. */
   async postWeekly(chat: string): Promise<void> {
-    const sticker = config.digestSticker;
-    if (sticker && existsSync(sticker)) await this.send(chat, { sticker: readFileSync(sticker) });
+    // Use the chapter-summary sticker once it exists; until then fall back to the plain UF Betas sticker.
+    const sticker = [config.digestSticker, 'assets/ufbetas-sticker.webp'].find((f) => f && existsSync(f));
+    if (sticker) await this.send(chat, { sticker: readFileSync(sticker) });
     const now = new Date();
     // Today (whatever hasn't happened yet) through the next 6 days.
     const evs = between(this.store, todayISO(now), todayISO(addDays(now, 6)), now);

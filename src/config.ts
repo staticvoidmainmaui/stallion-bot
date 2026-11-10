@@ -45,7 +45,7 @@ export const config = {
   chapterTime: process.env.CHAPTER_TIME || '18:30',
   chapterLocation: process.env.CHAPTER_LOCATION || 'McCarty B G108',
   /** 512x512 WebP sent before the Monday digest. Empty = no sticker. */
-  digestSticker: process.env.DIGEST_STICKER ?? 'assets/ufbetas-sticker.webp',
+  digestSticker: process.env.DIGEST_STICKER ?? 'assets/ufbetas-summary-sticker.webp',
   /** Cron schedules (chapter time zone). */
   weeklyDigestCron: process.env.WEEKLY_DIGEST_CRON || '0 12 * * 1',
   dailyDigestCron: process.env.DAILY_DIGEST_CRON || '0 9 * * 2-7',
