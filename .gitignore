@@ -10,3 +10,10 @@ roster.json
 
 GROUP-IDS.md
 fixtures/
+
+# local-only scratch
+patches/
+docs(do not touch)/
+*.patch
+*.bundle
+stallion_bot_avatar.jpeg
