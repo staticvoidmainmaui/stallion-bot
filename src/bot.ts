@@ -468,7 +468,7 @@ export class Bot {
     return true;
   }
 
-  /** Monday digest: UF Betas sticker, then chapter tonight + this week + who we need. */
+  /** Monday digest: UF Betas chapter-summary sticker, then chapter tonight + this week + who we need. */
   async postWeekly(chat: string): Promise<void> {
     // Use the chapter-summary sticker once it exists; until then fall back to the plain UF Betas sticker.
     const sticker = [config.digestSticker, 'assets/ufbetas-sticker.webp'].find((f) => f && existsSync(f));
@@ -476,7 +476,7 @@ export class Bot {
     const now = new Date();
     // Today (whatever hasn't happened yet) through the next 6 days.
     const evs = between(this.store, todayISO(now), todayISO(addDays(now, 6)), now);
-    await this.botSticker(chat);
+    // Weekly gets only the chapter-summary sticker, not Stallion's face sticker.
     await this.reply(chat, M.weekly(evs, this.needBros(21), config.chapterTime, config.chapterLocation, now));
   }
 
