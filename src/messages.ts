@@ -5,7 +5,7 @@
  * WhatsApp formatting: *bold*  _italic_  ~strike~  "> " quote line, "- " list line.
  * Bold = titles only (section headers, day labels). Event names in lists stay plain.
  * House style: SIG opens every bot message on its own line; list lines read "- *Name* · when · count"
- * ("> " in the Monday digest).
+ * ("▸ " in the Monday digest).
  */
 import { addDays, shortfall, todayISO, type EventView } from './events.js';
 import type { Extraction } from './extract.js';
@@ -16,10 +16,10 @@ export const SIG = '```[*STALLION_BOT*🎠]```';
 /** Normal list lines. */
 export const LIST = '- ';
 /**
- * List lines in the Monday digest only. "> " = WhatsApp quote line (grey bar on the left).
- * Other options: '▸ ', '➤ ', '┃ ', '◆ '.
+ * List lines in the Monday digest only (tiny triangle arrows).
+ * Other options: '> ' (WhatsApp quote line), '➤ ', '┃ ', '◆ '.
  */
-export const WEEKLY_BULLET = '> ';
+export const WEEKLY_BULLET = '▸ ';
 /** List lines in the daily / on-demand digest (!digest). */
 export const DIGEST_BULLET = '▸ ';
 export const POLL_OPTIONS = ['Going', 'Maybe', "Can't"];
